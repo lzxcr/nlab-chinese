@@ -34,7 +34,7 @@ jobs:
           NLAB_SITE_URL: ${{ vars.NLAB_SITE_URL || 'nlab-chinese.github.io' }}
           NLAB_OG_IMAGES: ${{ vars.NLAB_OG_IMAGES || '0' }}
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: public
 
