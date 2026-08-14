@@ -7,8 +7,9 @@ date: '2026-08-14'
 nlab:
   page_id: pages/4/4/4/4/4444
   source_url: https://ncatlab.org/nlab/show/Rehren%20duality
+  source_revision: 2ff4539bd95a3d3063379cdacd5a1de8e9eca7ba
   fetched_at: '2026-08-14T04:10:25Z'
-  translated_at: '2026-08-14T04:47:43Z'
+  translated_at: '2026-08-14T05:12:15Z'
   translator:
     model: gemma-4-12b-it
     prompt_version: structured-v1

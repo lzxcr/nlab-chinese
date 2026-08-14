@@ -7,8 +7,9 @@ date: '2026-08-14'
 nlab:
   page_id: pages/4/4/4/5/5444
   source_url: https://ncatlab.org/nlab/show/essentially%20algebraic%20%28infinity%2C1%29-theory
+  source_revision: 2ff4539bd95a3d3063379cdacd5a1de8e9eca7ba
   fetched_at: '2026-08-14T04:10:25Z'
-  translated_at: '2026-08-14T04:44:26Z'
+  translated_at: '2026-08-14T05:12:15Z'
   translator:
     model: gemma-4-12b-it
     prompt_version: structured-v1
@@ -25,27 +26,31 @@ nlab:
 
 ## 性质
 
-- 
+-
+
 一个普通的 [本质代数理论](https://ncatlab.org/nlab/show/essentially-algebraic-theory) 是一个 0-[截断](https://ncatlab.org/nlab/show/truncation) 的本质代数 -理论。
 
-- 
-若  是一个 [(∞,1)-topos](https://ncatlab.org/nlab/show/%28infinity%2C1%29-topos)，则  中的 $(\infty,1)$-代数在等价 $X$ 下对应于左正合的左伴随 $T$
+-
+
+若 是一个 [(∞,1)-topos](https://ncatlab.org/nlab/show/%28infinity%2C1%29-topos)，则 中的 -代数在等价  下对应于左正合的左伴随 $(\infty,1)$
 
 ## 例子
 
-- 一个 [geometry (for structured (∞,1)-toposes)](../../geometry-(for-structured-(infinity,1)-toposes)) 是一个本质代数理论的 $\mathcal{X}$-理论。
+- 一个 [geometry (for structured (∞,1)-toposes)](../.././../geometry-(for-structured-(infinity,1)-toposes)) 是一个本质代数理论的 $X$-理论。
 
 ## 相关条目
 
-- 
+-
+
 [代数理论](https://ncatlab.org/nlab/show/algebraic-theory), [本质代数理论](https://ncatlab.org/nlab/show/essentially-algebraic-theory)
 
-- 
-[代数 $PSh(T) \to \mathcal{X}$-理论](https://ncatlab.org/nlab/show/%28%E2%88%9E%2C1%29-algebraic-theory), **本质代数 $\Fun^L(PSh(T), \mathcal{X}) \to \Fun(T, \mathcal{X})$-理论**
+-
+
+[代数 $T$-理论](https://ncatlab.org/nlab/show/%28%E2%88%9E%2C1%29-algebraic-theory), **本质代数 $\mathcal{X}$-理论**
 
 ## 参考文献
 
-在本质代数理论 $(\infty,1)$-理论上的代数，它们扮演着代数 [结构层](https://ncatlab.org/nlab/show/structure-sheaf) 的角色，被考虑在
+在本质代数理论 $PSh(T) \to \mathcal{X}$-理论上的代数，它们扮演着代数 [结构层](https://ncatlab.org/nlab/show/structure-sheaf) 的角色，被考虑在
 
 - [Jacob Lurie](https://ncatlab.org/nlab/show/Jacob-Lurie), _[Structured Spaces](https://ncatlab.org/nlab/show/Structured-Spaces)_
 

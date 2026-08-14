@@ -264,6 +264,7 @@ def recover_pages(store: StateStore, html_dir: Path, *, dry_run: bool = False) -
         if dry_run:
             logger.info("[dry-run] 将恢复: %s (%s)", page["true_title"], target)
             continue
+        page["source_revision"] = store.get_meta("source_revision") or ""
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
             build_frontmatter(page) + "\n" + _bilingual_body(page["true_title"], translated, original),
