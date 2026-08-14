@@ -9,7 +9,7 @@ export const sharedPageComponents: SharedLayout = {
   footer: Component.Footer({
     links: {
       "nLab 原文": "https://ncatlab.org/nlab/show/HomePage",
-      数据来源与许可: "https://nlab-chinese.github.io/ATTRIBUTION",
+      数据来源与许可: "/ATTRIBUTION",
       "术语词典: 香蕉空间": "https://www.bananaspace.org",
     },
   }),

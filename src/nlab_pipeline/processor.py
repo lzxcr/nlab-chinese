@@ -16,6 +16,7 @@ Status machine (enforced in state.py):
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from urllib.parse import quote
 
 import yaml
@@ -98,7 +99,7 @@ def _validate_page(title: str, translated: str, original: str) -> list[str]:
     return errors
 
 
-def _output_path(page: dict) -> object:
+def _output_path(page: dict) -> Path:
     primary = to_safe_filename(page["category_primary"])
     secondary = to_safe_filename(page["category_secondary"])
     return settings.content_dir / primary / secondary / (page["slug"] + ".md")
