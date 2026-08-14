@@ -1,0 +1,9 @@
+allowBuilds:
+  "@parcel/watcher": true
+  esbuild: true
+  sharp: true
+
+# style-to-js@1.0.0 is CJS-only and breaks the ESM default import in
+# hast-util-to-jsx-runtime ("styleToJs is not a function"); force 1.1.x.
+overrides:
+  style-to-js: ^1.1.16

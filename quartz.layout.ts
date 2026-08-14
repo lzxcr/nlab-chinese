@@ -8,8 +8,9 @@ export const sharedPageComponents: SharedLayout = {
   afterBody: [],
   footer: Component.Footer({
     links: {
-      GitHub: "https://github.com/jackyzha0/quartz",
-      "Discord Community": "https://discord.gg/cRFFHYye7t",
+      "nLab 原文": "https://ncatlab.org/nlab/show/HomePage",
+      数据来源与许可: "https://nlab-chinese.github.io/ATTRIBUTION",
+      "术语词典: 香蕉空间": "https://www.bananaspace.org",
     },
   }),
 }

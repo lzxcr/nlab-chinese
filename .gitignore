@@ -9,3 +9,17 @@ tsconfig.tsbuildinfo
 private/
 .replit
 replit.nix
+
+# --- nLab-Chinese translation pipeline ---
+nlab-content/
+logs/
+__pycache__/
+*.pyc
+.env
+state/
+.pnpm-cache/
+.tools/
+.xdg/
+.pytest_cache/
+.npmrc
+package-lock.json

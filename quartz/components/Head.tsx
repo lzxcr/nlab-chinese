@@ -52,6 +52,13 @@ export default (() => {
         )}
         <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossOrigin="anonymous" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        {/* nLab-Chinese: defence-in-depth CSP.  Content HTML is already
+            whitelisted by the Sanitize transformer; this blocks anything else
+            (persistent XSS, third-party script injection) at the browser. */}
+        <meta
+          http-equiv="Content-Security-Policy"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: blob:; font-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'"
+        />
 
         <meta name="og:site_name" content={cfg.pageTitle}></meta>
         <meta property="og:title" content={title} />

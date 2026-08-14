@@ -102,14 +102,18 @@ export const ContentIndex: QuartzEmitterPlugin<Partial<Options>> = (opts) => {
       for (const [tree, file] of content) {
         const slug = file.data.slug!
         const date = getDate(ctx.cfg.configuration, file.data) ?? new Date()
-        if (opts?.includeEmptyFiles || (file.data.text && file.data.text !== "")) {
+        // nLab-Chinese: prefer the Chinese-only excerpt (set by the
+        // EnglishSection transformer) so the English snapshot does not double
+        // the size of the client-side search index.
+        const searchableText = file.data.searchExcerpt ?? file.data.text
+        if (opts?.includeEmptyFiles || (searchableText && searchableText !== "")) {
           linkIndex.set(slug, {
             slug,
             filePath: file.data.relativePath!,
             title: file.data.frontmatter?.title!,
             links: file.data.links ?? [],
             tags: file.data.frontmatter?.tags ?? [],
-            content: file.data.text ?? "",
+            content: searchableText ?? "",
             richContent: opts?.rssFullHtml
               ? escapeHTML(toHtml(tree as Root, { allowDangerousHtml: true }))
               : undefined,

@@ -1,0 +1,2 @@
+# Legacy stub: dependencies are managed by pyproject.toml at the repo root.
+# Install with: python3 -m pip install -e ".[dev]"

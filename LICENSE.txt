@@ -1,6 +1,9 @@
-MIT License
+MIT License (program code)
 
-Copyright (c) 2021 jackyzha0
+Copyright (c) nLab-Chinese contributors
+
+The program code of this repository (everything except the upstream nLab
+content and the translation corpus) is licensed under the MIT License:
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +22,20 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+-------------------------------------------------------------------------------
+
+Content licensing (nLab content & machine translations)
+
+The nLab source pages translated by this project remain the property of nLab
+and its contributors (https://ncatlab.org/nlab/show/HomePage).  nLab allows
+and encourages redistribution with attribution but has not adopted a formal
+license consensus; per-page provenance (source page, stable id, fetch time,
+translation model and prompt version) is recorded in each page's frontmatter.
+See ATTRIBUTION.md and DATA_POLICY.md.
+
+The Quartz site generator under quartz/ is Copyright (c) Jacky Zhao and
+distributed under its own MIT license (see quartz/LICENSE.txt).
+
+The seed term dictionary scripts/external_glossary.json originates from the
+Banana Space (bananaspace.org) Translist; see ATTRIBUTION.md.

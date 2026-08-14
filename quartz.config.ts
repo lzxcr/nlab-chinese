@@ -5,27 +5,37 @@ import * as Plugin from "./quartz/plugins"
  * Quartz 4 Configuration
  *
  * See https://quartz.jzhao.xyz/configuration for more information.
+ *
+ * Site URL: set NLAB_SITE_URL (e.g. https://nlab-chinese.example.org) before
+ * deploying; it feeds sitemap/RSS/OG canonical URLs.  The fallback below keeps
+ * local builds working but must not be used for a real deployment.
+ *
+ * NLAB_OG_IMAGES=0 disables per-page OG image generation (recommended when the
+ * translated corpus grows to tens of thousands of pages).
  */
 const config: QuartzConfig = {
   configuration: {
-    pageTitle: "Quartz 4",
+    pageTitle: "nLab 中文",
     pageTitleSuffix: "",
     enableSPA: true,
     enablePopovers: true,
-    analytics: {
-      provider: "plausible",
-    },
-    locale: "en-US",
-    baseUrl: "quartz.jzhao.xyz",
+    analytics: null,
+    locale: "zh-CN",
+    baseUrl: process.env.NLAB_SITE_URL ?? "https://nlab-chinese.github.io",
     ignorePatterns: ["private", "templates", ".obsidian"],
     defaultDateType: "modified",
     theme: {
-      fontOrigin: "googleFonts",
-      cdnCaching: true,
+      // System-installed CJK font stack: no external font CDN dependency.
+      // Self-host a subset of Source Han Sans / Noto Sans SC under
+      // quartz/static/fonts and add @font-face rules in custom.scss for fully
+      // offline deployments.
+      fontOrigin: "local",
+      cdnCaching: false,
       typography: {
-        header: "Schibsted Grotesk",
-        body: "Source Sans Pro",
-        code: "IBM Plex Mono",
+        header:
+          '"Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei"',
+        body: '"Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "WenQuanYi Micro Hei"',
+        code: '"JetBrains Mono", "IBM Plex Mono", "Sarasa Mono SC", ui-monospace, SFMono-Regular, Menlo, monospace',
       },
       colors: {
         lightMode: {
@@ -70,8 +80,14 @@ const config: QuartzConfig = {
       Plugin.GitHubFlavoredMarkdown(),
       Plugin.TableOfContents(),
       Plugin.CrawlLinks({ markdownLinkResolution: "shortest" }),
-      Plugin.Description(),
       Plugin.Latex({ renderEngine: "katex" }),
+      // nLab-Chinese additions:
+      // 1. hard HTML whitelist (defence against upstream/model HTML)
+      Plugin.Sanitize(),
+      // 2. collapsed lang="en" wrapper around the English original + search
+      //    index that only carries the Chinese translation
+      Plugin.EnglishSection(),
+      Plugin.Description(),
     ],
     filters: [Plugin.RemoveDrafts()],
     emitters: [
@@ -88,8 +104,9 @@ const config: QuartzConfig = {
       Plugin.Static(),
       Plugin.Favicon(),
       Plugin.NotFoundPage(),
-      // Comment out CustomOgImages to speed up build time
-      Plugin.CustomOgImages(),
+      // Per-page OG images get expensive at scale (tens of thousands of
+      // pages); disable with NLAB_OG_IMAGES=0.
+      ...(process.env.NLAB_OG_IMAGES === "0" ? [] : [Plugin.CustomOgImages()]),
     ],
   },
 }

@@ -1,3 +1,34 @@
 @use "./base.scss";
 
-// put your custom CSS here!
+// --- nLab-Chinese custom styles -------------------------------------------
+
+// Collapsed English original (wrapped by the EnglishSection transformer).
+details.english-original {
+  margin-top: 1.5rem;
+  border-top: 1px dashed var(--lightgray);
+  padding-top: 0.75rem;
+
+  &[open] {
+    border-top: 1px solid var(--lightgray);
+  }
+
+  summary {
+    cursor: pointer;
+    font-weight: var(--semiBoldWeight);
+    color: var(--secondary);
+    user-select: none;
+
+    &:hover {
+      color: var(--tertiary);
+    }
+  }
+}
+
+// Optional: self-hosted CJK subset fonts.  Drop the subset WOFF2 files under
+// quartz/static/fonts and uncomment:
+//
+// @font-face {
+//   font-family: "Noto Sans SC Subset";
+//   src: url("/static/fonts/NotoSansSC-subset.woff2") format("woff2");
+//   font-display: swap;
+// }

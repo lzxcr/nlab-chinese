@@ -1,0 +1,33 @@
+# Never copy into the image:
+.git
+.gitignore
+node_modules
+public
+.quartz-cache
+tsconfig.tsbuildinfo
+
+# secrets / local state
+.env
+.env.*
+!.env.example
+
+# heavy local data (regenerated inside CI/pipeline)
+nlab-content
+state
+logs
+scripts/nlab_glossary.json
+scripts/external_glossary.json
+
+# local tooling caches
+.pnpm-cache
+.pytest_cache
+.tools
+.xdg
+.npmrc
+__pycache__
+*.pyc
+
+# docs/editor cruft
+.obsidian
+private
+prof

@@ -1,3 +1,16 @@
 public
 node_modules
 .quartz-cache
+pnpm-lock.yaml
+.env.example
+manage.sh
+# local tooling caches
+.pnpm-cache
+.pytest_cache
+.tools
+.xdg
+# generated pipeline outputs / data files
+content/
+state/
+scripts/external_glossary.json
+scripts/nlab_glossary.json
