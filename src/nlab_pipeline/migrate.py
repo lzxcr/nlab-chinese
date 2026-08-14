@@ -17,7 +17,7 @@ from pathlib import Path
 import yaml
 
 from .config import logger, settings
-from .processor import _bilingual_body, build_frontmatter
+from .processor import PublicationError, _output_path, publish_page
 from .state import StateStore
 
 _SECTION = re.compile(
@@ -60,13 +60,21 @@ def migrate_legacy_pages(store: StateStore, *, dry_run: bool = False) -> int:
         logger.info("没有已发布词条需要迁移。")
         return 0
 
-    by_title = {p["true_title"].lower(): p for p in published}
+    title_candidates: dict[str, list[dict]] = {}
+    slug_candidates: dict[str, list[dict]] = {}
+    for page in published:
+        title_candidates.setdefault(page["true_title"].lower(), []).append(page)
+        slug_candidates.setdefault(page["slug"].lower(), []).append(page)
+    by_title = {key: values[0] for key, values in title_candidates.items() if len(values) == 1}
+    by_slug = {key: values[0] for key, values in slug_candidates.items() if len(values) == 1}
     by_alias: dict[str, dict] = {}
     lookup = store.get_lookup()
     for alias_lower, candidates in lookup.items():
-        for candidate in candidates:
-            if candidate["status"] == "published":
-                by_alias[alias_lower] = candidate
+        published_candidates = [
+            candidate for candidate in candidates if candidate["status"] == "published"
+        ]
+        if len(published_candidates) == 1:
+            by_alias[alias_lower] = published_candidates[0]
 
     migrated = 0
     legacy_files = [
@@ -77,11 +85,15 @@ def migrate_legacy_pages(store: StateStore, *, dry_run: bool = False) -> int:
         parsed = _parse_legacy_page(path)
         if parsed is None or not parsed["translated"]:
             continue
+        nlab = parsed["frontmatter"].get("nlab")
+        if isinstance(nlab, dict) and nlab.get("source_content_md5"):
+            # Already in the current provenance-bearing format.
+            continue
         title = str(parsed["frontmatter"].get("title", "")).strip()
         aliases = [str(a) for a in parsed["frontmatter"].get("aliases", [])]
         page = (
             by_title.get(title.lower())
-            or by_title.get(path.stem.lower())
+            or by_slug.get(path.stem.lower())
             or next((by_alias.get(a.lower()) for a in [title] + aliases if a.lower() in by_alias), None)
         )
         if page is None:
@@ -94,21 +106,31 @@ def migrate_legacy_pages(store: StateStore, *, dry_run: bool = False) -> int:
             logger.info("[dry-run] 将迁移: %s (%s)", page["true_title"], path)
             continue
 
-        new_path = (
-            settings.content_dir / page["category_primary"] / page["category_secondary"]
-            / (page["slug"] + ".md")
-        )
-        new_path.parent.mkdir(parents=True, exist_ok=True)
-        content = build_frontmatter(page) + "\n" + _bilingual_body(
-            page["true_title"], parsed["translated"], parsed["original"] or parsed["translated"]
-        )
-        new_path.write_text(content, encoding="utf-8")
+        new_path = _output_path(page)
+        original = parsed["original"]
+        if not original:
+            store.record_error(None, page["page_id"], "migrate-validate", "旧页面缺少英文原文区块")
+            store.transition(page["page_id"], "queued")
+            logger.error("旧页面缺少英文原文，拒绝迁移: %s", path)
+            continue
+        try:
+            publish_page(
+                store,
+                page,
+                parsed["translated"],
+                original,
+                translator_model="legacy-import-unknown",
+                prompt_version="legacy-page-migration-v1",
+            )
+        except PublicationError as exc:
+            store.record_error(None, page["page_id"], f"migrate-{exc.stage}", str(exc))
+            store.transition(page["page_id"], "queued")
+            logger.error("旧页面未通过发布门禁 %s: %s", path, exc)
+            continue
         if new_path.resolve() != path.resolve():
             path.unlink(missing_ok=True)
         migrated += 1
         logger.info("已迁移旧发布页面: %s -> %s", path, new_path)
 
-    if migrated:
-        store.export_json(settings.glossary_file)
     logger.info("旧页面迁移完成: %d 页。", migrated)
     return migrated

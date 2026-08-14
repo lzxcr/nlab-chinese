@@ -1,6 +1,8 @@
 import { PageLayout, SharedLayout } from "./quartz/cfg"
 import * as Component from "./quartz/components"
 
+const repositoryUrl = process.env.NLAB_REPOSITORY_URL?.trim()
+
 // components shared across all pages
 export const sharedPageComponents: SharedLayout = {
   head: Component.Head(),
@@ -10,7 +12,7 @@ export const sharedPageComponents: SharedLayout = {
     links: {
       "nLab 原文": "https://ncatlab.org/nlab/show/HomePage",
       数据来源与许可: "/ATTRIBUTION",
-      "术语词典: 香蕉空间": "https://www.bananaspace.org",
+      ...(repositoryUrl ? { 项目源码: repositoryUrl } : {}),
     },
   }),
 }
@@ -24,6 +26,7 @@ export const defaultContentPageLayout: PageLayout = {
     }),
     Component.ArticleTitle(),
     Component.ContentMeta(),
+    Component.Provenance(),
     Component.TagList(),
   ],
   left: [

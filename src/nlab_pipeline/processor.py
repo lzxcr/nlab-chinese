@@ -15,7 +15,9 @@ Status machine (enforced in state.py):
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,10 +27,45 @@ from .cleaner import clean_nlab_garbage, fix_wikilinks, to_safe_filename
 from .config import PROMPT_VERSION, logger, settings
 from .dictionary import dictionary_fingerprint
 from .llm import LLMClient
+from .protector import protected_spans
 from .state import StateStore, iso_now
 from .translator import Cache, TranslationError, translate_document
 
 _CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_HEADING_LEVEL = re.compile(r"^(#{1,6})[ \t]+", re.MULTILINE)
+_INLINE_LINK = re.compile(r"(!?)\[[^\]\n]*\]\((?:(?:[^()\n]+|\([^()\n]*\))*)\)")
+_REFERENCE_LINK = re.compile(r"(!?)\[[^\]\n]*\]\[[^\]\n]+\]")
+_LIST_PREFIX = re.compile(r"^([ \t]*)([-+*]|\d+[.)])[ \t]+(?:\[([ xX])\][ \t]+)?", re.MULTILINE)
+_QUOTE_PREFIX = re.compile(r"^[ \t]*((?:>[ \t]?)+)", re.MULTILINE)
+_TABLE_DELIMITER = re.compile(
+    r"^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$",
+    re.MULTILINE,
+)
+
+
+def _markdown_shape(text: str) -> dict[str, list]:
+    """Capture translatable Markdown scaffolding not covered as opaque spans."""
+    return {
+        "links": [match.group(1) == "!" for match in _INLINE_LINK.finditer(text)],
+        "reference_links": [
+            match.group(1) == "!" for match in _REFERENCE_LINK.finditer(text)
+        ],
+        "lists": [
+            (len(match.group(1).expandtabs(4)), match.group(2), match.group(3) or "")
+            for match in _LIST_PREFIX.finditer(text)
+        ],
+        "quotes": [match.group(1).count(">") for match in _QUOTE_PREFIX.finditer(text)],
+        "tables": [match.group(0).count("|") for match in _TABLE_DELIMITER.finditer(text)],
+    }
+
+
+class PublicationError(RuntimeError):
+    """Raised when a page cannot pass validation or be committed safely."""
+
+    def __init__(self, stage: str, errors: list[str] | str) -> None:
+        self.stage = stage
+        self.errors = [errors] if isinstance(errors, str) else errors
+        super().__init__("; ".join(self.errors))
 
 
 def build_frontmatter(page: dict) -> str:
@@ -53,7 +90,12 @@ def build_frontmatter(page: dict) -> str:
         "source_revision": page.get("source_revision") or "",
         "fetched_at": page.get("fetched_at") or "",
         "translated_at": page.get("translated_at") or iso_now(),
-        "translator": {"model": settings.llm_model, "prompt_version": PROMPT_VERSION},
+        "source_content_md5": page.get("source_md5") or "",
+        "translator": {
+            "model": page.get("translator_model") or settings.llm_model,
+            "prompt_version": page.get("prompt_version") or PROMPT_VERSION,
+        },
+        "quality_status": "machine-translated-unreviewed",
         "license_note": "nLab 内容按 nLab 使用条款以署名方式转载，译文由机器翻译生成，仅供参考。",
     }
     body = yaml.safe_dump(
@@ -88,15 +130,48 @@ def _validate_page(title: str, translated: str, original: str) -> list[str]:
     for marker in ("<source_text>", "</source_text>", "<think>"):
         if marker in translated:
             errors.append(f"译文残留提示词标记: {marker}")
-    fences = original.count("\u0060\u0060\u0060")
-    if fences != translated.count("\u0060\u0060\u0060"):
-        errors.append(f"代码块数量不一致 (原文 {fences}, 译文 {translated.count(chr(96) * 3)})")
-    if translated.count("$$") % 2 != 0:
-        errors.append("$$ 数量不平衡（未闭合的显示公式会吞掉后续内容）")
-    if translated.count("$$") != original.count("$$"):
+    original_spans = protected_spans(original)
+    translated_spans = protected_spans(translated)
+    if translated_spans != original_spans:
+        original_kinds = [kind for kind, _ in original_spans]
+        translated_kinds = [kind for kind, _ in translated_spans]
+        if original_kinds.count("fence") != translated_kinds.count("fence"):
+            errors.append(
+                "代码块数量不一致 "
+                f"(原文 {original_kinds.count('fence')}, "
+                f"译文 {translated_kinds.count('fence')})"
+            )
+        if translated_kinds != original_kinds:
+            errors.append(
+                "受保护结构的类型/顺序不一致 "
+                f"(原文 {original_kinds}, 译文 {translated_kinds})"
+            )
+        else:
+            changed = [
+                str(index)
+                for index, (source, result) in enumerate(
+                    zip(original_spans, translated_spans, strict=True)
+                )
+                if source != result
+            ]
+            errors.append(f"受保护结构内容被改写（位置 {', '.join(changed[:20])}）")
+    original_headings = _HEADING_LEVEL.findall(original)
+    translated_headings = _HEADING_LEVEL.findall(translated)
+    if original_headings != translated_headings:
         errors.append(
-            f"显示公式数量不一致 (原文 {original.count('$$')}, 译文 {translated.count('$$')})"
+            f"标题层级/顺序不一致 (原文 {original_headings}, 译文 {translated_headings})"
         )
+    original_shape = _markdown_shape(original)
+    translated_shape = _markdown_shape(translated)
+    for kind, label in (
+        ("links", "Markdown 链接"),
+        ("reference_links", "引用式链接"),
+        ("lists", "列表/任务项"),
+        ("quotes", "引用层级"),
+        ("tables", "表格分隔行"),
+    ):
+        if translated_shape[kind] != original_shape[kind]:
+            errors.append(f"{label}结构不一致")
     return errors
 
 
@@ -122,6 +197,171 @@ def _remove_old_output(page: dict) -> None:
             logger.warning("删除旧输出失败 %s: %s", candidate, exc)
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Durably replace *path* without exposing a partial Markdown file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        try:
+            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            # The file replacement is already atomic; directory fsync is an
+            # extra durability guarantee unavailable on some filesystems.
+            pass
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def publish_page(
+    store: StateStore,
+    page: dict,
+    translated: str,
+    original: str,
+    *,
+    translator_model: str | None = None,
+    prompt_version: str | None = None,
+) -> Path:
+    """Validate and atomically publish one bilingual page.
+
+    The database deliberately reaches ``validated`` before the filesystem
+    replacement.  If the process dies between those operations, the next run
+    can distinguish a complete atomic file from a missing one and reconcile
+    it without claiming that partial content was published.
+    """
+    errors = _validate_page(page["true_title"], translated, original)
+    if errors:
+        raise PublicationError("validate", errors)
+
+    page_id = page["page_id"]
+    current = store.get_page(page_id)
+    if current is None:
+        raise PublicationError("state", f"词条不存在: {page_id}")
+    current_status = current["status"]
+    if current_status == "translated":
+        store.transition(page_id, "validated")
+    elif current_status == "needs_review":
+        store.transition(page_id, "validated")
+    elif current_status not in {"validated", "published"}:
+        raise PublicationError("state", f"状态 {current_status} 不允许发布")
+
+    now = iso_now()
+    output_page = {
+        **current,
+        **page,
+        "aliases": store.get_aliases(page_id),
+        "source_revision": current.get("source_revision")
+        or store.get_meta("source_revision")
+        or "",
+        "translated_at": now,
+        "published_at": now,
+        "translator_model": translator_model
+        or current.get("translator_model")
+        or settings.llm_model,
+        "prompt_version": prompt_version
+        or current.get("prompt_version")
+        or PROMPT_VERSION,
+    }
+    target_path = _output_path(output_page)
+    page_out = build_frontmatter(output_page) + "\n" + _bilingual_body(
+        output_page["true_title"], translated, original
+    )
+    try:
+        _atomic_write_text(target_path, page_out)
+    except (OSError, UnicodeError) as exc:
+        raise PublicationError("write", str(exc)) from exc
+
+    if current_status == "validated" or current_status == "translated":
+        store.transition(page_id, "published")
+    elif current_status == "needs_review":
+        store.transition(page_id, "published")
+    store.update_page(
+        page_id,
+        translated_at=now,
+        published_at=now,
+        source_revision=output_page["source_revision"],
+        translator_model=output_page["translator_model"],
+        prompt_version=output_page["prompt_version"],
+        last_error="",
+        fail_count=0,
+    )
+    return target_path
+
+
+def _frontmatter(path: Path) -> dict | None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    match = re.match(r"^---\r?\n(.*?)\r?\n---(?:\r?\n|$)", text, re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = yaml.safe_load(match.group(1)) or {}
+    except yaml.YAMLError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def reconcile_publication_state(store: StateStore) -> dict[str, int]:
+    """Repair states left by crashes or files removed outside the pipeline."""
+    stats = {"requeued": 0, "published": 0}
+    for page in store.get_pages():
+        status = page["status"]
+        if status in {"translating", "translated"}:
+            store.transition(page["page_id"], "queued", force=True)
+            stats["requeued"] += 1
+            continue
+        if status not in {"validated", "published"}:
+            continue
+        target = _output_path(page)
+        front = _frontmatter(target) if target.is_file() else None
+        source = front.get("nlab", {}) if isinstance(front, dict) else {}
+        complete = (
+            isinstance(source, dict)
+            and source.get("page_id") == page["page_id"]
+            and source.get("source_content_md5") == page.get("source_md5")
+            and not front.get("draft", False)
+        )
+        if status == "validated" and complete:
+            store.transition(page["page_id"], "published")
+            stats["published"] += 1
+        elif not complete:
+            store.transition(page["page_id"], "queued", force=status == "validated")
+            stats["requeued"] += 1
+    return stats
+
+
+def _record_failure(
+    store: StateStore,
+    page: dict,
+    stage: str,
+    message: str,
+    run_id: int | None,
+) -> None:
+    page_id = page["page_id"]
+    fail_count = int(page.get("fail_count") or 0) + 1
+    store.record_error(run_id, page_id, stage, message)
+    store.update_page(page_id, last_error=message[:500], fail_count=fail_count)
+    current = store.get_page(page_id)
+    if current and current["status"] not in {"failed", "needs_review"}:
+        store.transition(page_id, "failed")
+    if fail_count >= settings.max_fail_count:
+        store.transition(page_id, "needs_review")
+
+
 def run_translation(
     store: StateStore,
     limit: int | None = None,
@@ -130,6 +370,7 @@ def run_translation(
     dry_run: bool = False,
     use_cache: bool = True,
     force: bool = False,
+    run_id: int | None = None,
 ) -> tuple[int, int, int]:
     """Translate pending entries.
 
@@ -142,13 +383,28 @@ def run_translation(
             f"LLM 后端不可用 ({settings.llm_base_url})。请先启动 llama-server（见 manage.sh serve）。"
         )
 
+    recovery = {"requeued": 0, "published": 0}
+    if not dry_run:
+        recovery = reconcile_publication_state(store)
+    if any(recovery.values()):
+        logger.warning(
+            "已协调上次中断的发布状态: 重新入队 %d，确认发布 %d",
+            recovery["requeued"], recovery["published"],
+        )
     lookup = store.get_lookup()
     glossary_hash = dictionary_fingerprint()
     cache = Cache(backend=store if use_cache else None)
     pending = store.pending_translation(limit=limit, category=category)
     if force:
         extra = store.pages_in_status("needs_review")
-        pending += extra[:limit] if limit else extra
+        if category:
+            extra = [
+                page for page in extra
+                if category in (page["category_primary"], page["category_secondary"])
+            ]
+        pending += extra
+        if limit:
+            pending = pending[:limit]
 
     if not pending:
         logger.info("[SUCCESS] 所有概念词条目前均处于最新状态。")
@@ -165,15 +421,16 @@ def run_translation(
         title = page["true_title"]
         source_path = settings.nlab_dir / page["source_path"]
         if not source_path.is_dir():
-            logger.warning("源路径不存在，跳过: %s (%s)", title, source_path)
-            skipped += 1
+            message = f"源路径不存在: {source_path}"
+            logger.error("%s (%s)", message, title)
+            _record_failure(store, page, "read", message, run_id)
+            failed += 1
             continue
 
         try:
             raw = (source_path / "content.md").read_text(encoding="utf-8")
         except OSError as exc:
-            store.record_error(None, page_id, "read", str(exc))
-            store.update_page(page_id, last_error=str(exc), fail_count=page["fail_count"] + 1)
+            _record_failure(store, page, "read", str(exc), run_id)
             failed += 1
             continue
 
@@ -192,65 +449,24 @@ def run_translation(
             translated = translate_document(client, fixed, title, lookup, cache, glossary_hash)
             store.transition(page_id, "translated")
         except TranslationError as exc:
-            store.record_error(None, page_id, "translate", str(exc))
-            store.update_page(page_id, last_error=str(exc)[:500],
-                              fail_count=page["fail_count"] + 1)
-            if page["fail_count"] + 1 >= settings.max_fail_count:
-                store.transition(page_id, "needs_review")
-            else:
-                store.transition(page_id, "failed")
+            _record_failure(store, page, "translate", str(exc), run_id)
             logger.error("翻译失败 [%s]: %s", title, exc)
             failed += 1
             continue
         except Exception as exc:  # noqa: BLE001 - record, never fake-success
-            store.record_error(None, page_id, "translate", str(exc))
-            store.update_page(page_id, last_error=str(exc)[:500],
-                              fail_count=page["fail_count"] + 1)
-            if page["fail_count"] + 1 >= settings.max_fail_count:
-                store.transition(page_id, "needs_review")
-            else:
-                store.transition(page_id, "failed")
+            _record_failure(store, page, "translate", str(exc), run_id)
             logger.error("翻译崩溃 [%s]: %s", title, exc)
             failed += 1
             continue
 
-        errors = _validate_page(title, translated, fixed)
-        if errors:
-            store.record_error(None, page_id, "validate", "; ".join(errors))
-            store.update_page(page_id, last_error="; ".join(errors)[:500],
-                              fail_count=page["fail_count"] + 1)
-            store.transition(page_id, "failed")
-            logger.error("校验未通过 [%s]: %s", title, "; ".join(errors))
-            failed += 1
-            continue
-        store.transition(page_id, "validated")
-
-        page["source_revision"] = store.get_meta("source_revision") or ""
-        target_path = _output_path(page)
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        page_out = build_frontmatter(page) + "\n" + _bilingual_body(title, translated, fixed)
         try:
-            target_path.write_text(page_out, encoding="utf-8")
-        except OSError as exc:
-            store.record_error(None, page_id, "write", str(exc))
-            store.transition(page_id, "failed")
-            logger.error("文件写入失败 %s: %s", target_path, exc)
+            publish_page(store, page, translated, fixed)
+        except PublicationError as exc:
+            _record_failure(store, page, exc.stage, str(exc), run_id)
+            logger.error("发布失败 [%s]: %s", title, exc)
             failed += 1
             continue
-
-        now = iso_now()
-        store.update_page(
-            page_id,
-            status="published",
-            translated_at=now,
-            published_at=now,
-            last_error="",
-            fail_count=0,
-        )
         published += 1
-        if published % 10 == 0:
-            store.export_json(settings.glossary_file)
 
-    store.export_json(settings.glossary_file)
     logger.info("=== 同步流转结束！成功汉化发布: %d 条, 失败: %d 条 ===", published, failed)
     return published, failed, skipped

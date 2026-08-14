@@ -4,35 +4,36 @@ tags:
   - 关于
 ---
 
-# 数据来源与许可
-
-本站（nLab-Chinese）是 [nLab](https://ncatlab.org/) 的中英对照镜像与机器翻译项目。
+本站是 [nLab](https://ncatlab.org/) 的中英对照镜像与机器翻译项目，不代表 nLab 或
+其贡献者。
 
 ## 内容来源
 
-- **原文内容**：全部来自 [nLab](https://ncatlab.org/nlab/show/HomePage)（ncatlab.org），其维护者允许并鼓励在注明来源的前提下使用与分发，但 nLab 社区尚未形成正式的许可证共识。
-- **术语词典**：种子翻译来自[香蕉空间](https://www.bananaspace.org)（Banana Space）的全站 Translist 词条。
-- **翻译**：由本地部署的大模型生成（默认 gemma-4-12b-it），未经人工校对。
+- **英文原文**来自 nLab 及其贡献者。nLab 当前鼓励遵循学术惯例、注明来源的使用与
+  分发，但尚未形成更正式的统一许可证共识。
+- **中文译文**由配置的大模型生成，默认未经人工校对。
+- **术语数据**可由运营者在本地提供；本站项目不分发许可不明确的第三方术语数据。
 
 ## 逐页归属
 
-每个词条页面的 frontmatter 均记录：
+每个通过发布门禁的词条页面记录：
 
 | 字段 | 说明 |
-| ---- | ---- |
-| nlab.page_id | nLab 源页面稳定 ID（源仓库内相对路径） |
-| nlab.source_url | 上游原文页面地址 |
-| nlab.fetched_at | 内容抓取时间 |
-| nlab.translated_at | 翻译时间 |
-| nlab.translator.model / prompt_version | 翻译模型与提示词版本 |
+| --- | --- |
+| `nlab.page_id` | nLab 源仓库中的稳定页面路径 |
+| `nlab.source_url` | nLab 原文页面 |
+| `nlab.source_revision` | 上游仓库修订 |
+| `nlab.source_content_md5` | 当前源内容哈希 |
+| `nlab.fetched_at` | 抓取时间 |
+| `nlab.translated_at` | 翻译时间 |
+| `nlab.translator` | 模型与提示词版本 |
+| `nlab.quality_status` | 机器翻译或人工审核状态 |
 
-## 使用与分发
+## 使用与反馈
 
-- 本站**程序代码**采用 [MIT 许可证](/LICENSE.txt)。
-- **nLab 原文内容**的版权属于 nLab 及其贡献者，请按 nLab 的使用条款转载。
-- **机器译文**仅供参考学习，不构成学术依据；严谨表述请以英文原文为准。
-- 若您是 nLab 内容的贡献者并认为本镜像的归属写法不当，请提交 Issue，我们会尽快更正。
+项目程序代码采用 MIT License；nLab 原文、机器译文和其他第三方内容不因此自动变为
+MIT。转载前请核对 [nLab 使用说明](https://ncatlab.org/nlab/show/HomePage) 和相关
+贡献者要求。
 
-## 反馈
-
-翻译错误、术语不当或链接失效，请通过 GitHub Issues 反馈（见页脚仓库链接）。
+发现翻译错误、死链、归属问题或需要删除内容时，请通过项目仓库 Issue 反馈。涉及
+私人身份或权利证明时，请先请求私密联系方式，不要公开敏感材料。

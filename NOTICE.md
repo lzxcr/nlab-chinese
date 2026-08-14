@@ -1,22 +1,23 @@
-# NOTICE
+# 第三方声明
 
-本项目（nLab-Chinese）是一个将 [nLab](https://ncatlab.org/) 自动翻译为中文的社区项目。
+nLab-Chinese 是社区维护的机器翻译与静态站点项目，不代表 nLab、香蕉空间或 Quartz
+原作者。
 
-## 第三方内容
+## 内容
 
-- **nLab 内容**：页面原文来自 nLab（https://ncatlab.org/nlab/show/HomePage）。
-  nLab 允许并鼓励在注明来源的前提下使用与分发，但 nLab 社区尚未形成正式的
-  许可证共识；逐页来源、抓取时间与翻译模型记录在每页 frontmatter 的
-  `nlab` 字段中，详见 [ATTRIBUTION.md](ATTRIBUTION.md) 与
+- **nLab 页面**：原文来自 [nLab](https://ncatlab.org/nlab/show/HomePage) 及其
+  贡献者。逐页来源、源修订、抓取时间和翻译信息记录在 frontmatter 的 `nlab`
+  字段中。详细边界见 [ATTRIBUTION.md](ATTRIBUTION.md) 与
   [DATA_POLICY.md](DATA_POLICY.md)。
-- **术语词典**：`scripts/external_glossary.json` 的种子翻译来自
-  [香蕉空间](https://www.bananaspace.org)（Banana Space）的全站 Translist
-  词条，感谢香蕉空间的开放整理。
-- **站点生成器**：本仓库基于 [Quartz v4](https://quartz.jzhao.xyz/)
-  （MIT License，Copyright (c) Jacky Zhao），`quartz/` 目录保留其原始代码
-  与版权声明。
+- **机器译文**：由配置的本地或远程模型生成，默认未经人工校对，不属于仓库 MIT
+  软件许可的自动覆盖范围。
+- **外部术语表**：香蕉空间 Translist 未发现明确再分发许可，因而不随仓库提交。
+  运营者对其本地提供的数据承担授权核验责任。
 
-## 第三方软件
+## 软件
 
-依赖树中的所有第三方软件包各自保留其许可证；程序代码的整体许可见
-[LICENSE.txt](LICENSE.txt)（MIT）。
+- **Quartz v4**：`quartz/` 基于 Jacky Zhao 的 Quartz，采用 MIT License；许可证
+  副本见 [quartz/LICENSE.txt](quartz/LICENSE.txt)。
+- **第三方依赖**：Python、Node.js 和容器依赖分别适用各自许可证。
+- **项目代码**：除另有标记外，采用根目录 [LICENSE.txt](LICENSE.txt) 中的 MIT
+  License。

@@ -10,6 +10,7 @@ export type JSResource = {
   | {
       src: string
       contentType: "external"
+      integrity?: string
     }
   | {
       script: string
@@ -21,6 +22,7 @@ export type CSSResource = {
   content: string
   inline?: boolean
   spaPreserve?: boolean
+  integrity?: string
 }
 
 export function JSResourceToScriptElement(resource: JSResource, preserve?: boolean): JSX.Element {
@@ -29,7 +31,14 @@ export function JSResourceToScriptElement(resource: JSResource, preserve?: boole
 
   if (resource.contentType === "external") {
     return (
-      <script key={resource.src} src={resource.src} type={scriptType} data-persist={spaPreserve} />
+      <script
+        key={resource.src}
+        src={resource.src}
+        type={scriptType}
+        data-persist={spaPreserve}
+        integrity={resource.integrity}
+        crossOrigin={resource.integrity ? "anonymous" : undefined}
+      />
     )
   } else {
     const content = resource.script
@@ -56,6 +65,8 @@ export function CSSResourceToStyleElement(resource: CSSResource, preserve?: bool
         rel="stylesheet"
         type="text/css"
         data-persist={spaPreserve}
+        integrity={resource.integrity}
+        crossOrigin={resource.integrity ? "anonymous" : undefined}
       />
     )
   }

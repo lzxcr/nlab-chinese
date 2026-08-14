@@ -1,3 +1,5 @@
+# Exact direct and transitive Python dependencies used by CI.
+# Regenerate intentionally after reviewing dependency updates.
 certifi==2026.7.22
 charset-normalizer==3.5.0
 idna==3.18

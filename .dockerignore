@@ -15,6 +15,7 @@ tsconfig.tsbuildinfo
 nlab-content
 state
 logs
+models
 scripts/nlab_glossary.json
 scripts/external_glossary.json
 
@@ -26,6 +27,9 @@ scripts/external_glossary.json
 .npmrc
 __pycache__
 *.pyc
+*.egg-info
+.coverage
+htmlcov
 
 # docs/editor cruft
 .obsidian

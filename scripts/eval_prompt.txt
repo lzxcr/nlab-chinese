@@ -1,9 +1,0 @@
-A **presheaf** on a [[category]] $C$ is a [[functor]]
-$$
-  F \,\colon\, C^{op} \longrightarrow Set
-$$
-from the [[opposite category]] to the category of [[sets]].
-
-For each [[morphism]] $f \,\colon\, U \to V$ in $C$, one obtains a **restriction map** $F(f) \,\colon\, F(V) \to F(U)$. A presheaf is **representable** if it is isomorphic to a [[hom-functor]].
-
-Given a [[Grothendieck topology]] on $C$, a presheaf is a **sheaf** precisely when it satisfies the [[descent]] condition for every [[covering sieve]]. The [[Yoneda embedding]] then realizes every object as a representable presheaf, and the sheafification functor is the left adjoint to the inclusion of sheaves into presheaves.

@@ -1,5 +1,6 @@
 import { QuartzConfig } from "./quartz/cfg"
 import * as Plugin from "./quartz/plugins"
+import { normalizeBaseUrl } from "./quartz/util/siteUrl"
 
 /**
  * Quartz 4 Configuration
@@ -7,8 +8,8 @@ import * as Plugin from "./quartz/plugins"
  * See https://quartz.jzhao.xyz/configuration for more information.
  *
  * Site URL: set NLAB_SITE_URL (e.g. https://nlab-chinese.example.org) before
- * deploying; it feeds sitemap/RSS/OG canonical URLs.  The fallback below keeps
- * local builds working but must not be used for a real deployment.
+ * deploying; it feeds sitemap/RSS/OG canonical URLs. The fallback is this
+ * project's GitHub Pages host and keeps local builds deterministic.
  *
  * NLAB_OG_IMAGES=0 disables per-page OG image generation (recommended when the
  * translated corpus grows to tens of thousands of pages).
@@ -21,7 +22,7 @@ const config: QuartzConfig = {
     enablePopovers: true,
     analytics: null,
     locale: "zh-CN",
-    baseUrl: process.env.NLAB_SITE_URL ?? "https://nlab-chinese.github.io",
+    baseUrl: normalizeBaseUrl(process.env.NLAB_SITE_URL ?? "nlab-chinese.github.io"),
     ignorePatterns: ["private", "templates", ".obsidian"],
     defaultDateType: "modified",
     theme: {

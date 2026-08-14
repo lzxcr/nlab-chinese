@@ -1,168 +1,187 @@
 # nLab-Chinese
 
-将 [nLab](https://ncatlab.org/)（数学与理论物理的开放式学术百科）自动翻译为**中英对照**站点，
-基于 [Quartz v4](https://quartz.jzhao.xyz/) 构建发布。
+将 [nLab](https://ncatlab.org/) 的数学、物理与哲学条目转换为经过结构校验的
+中英对照静态站点。翻译流水线使用 Python，站点基于
+[Quartz v4](https://quartz.jzhao.xyz/) 构建。
 
-## 架构
+> [!IMPORTANT]
+> 译文由机器生成，默认未经人工校对，仅供检索和学习参考。公式、定义和引文应以
+> 每页附带的 nLab 英文原文及源页面为准。
 
-```
-ncatlab/nlab-content (上游源)
-        │ sync-repo (git shallow clone/pull)
+## 工作方式
+
+```text
+ncatlab/nlab-content（上游源）
+        │ sync-repo
         ▼
-scan ──▶ state/nlab_state.db (SQLite 中央状态库, 主键=源路径 page_id)
-        │  slug 唯一化 + 别名歧义候选 + 断言校验
+scan ──▶ state/nlab_state.db（SQLite 状态库，page_id 为源路径）
+        │ slug 唯一化、别名消歧、删除保护
         ▼
-translate (结构化保护 → 分块 → LLM → 校验 → 分块缓存)
-        │ 仅翻译纯文本: 公式/代码/链接/HTML 永不进入模型
+translate（结构保护 → 分块 → LLM → 校验 → 分块缓存）
+        │ 公式、代码、链接目标和 HTML 不发送给模型
         ▼
-content/*.md (中英对照页, YAML frontmatter + 逐页来源归属)
+content/*.md（中英对照页面、YAML frontmatter、逐页溯源）
         │
         ▼
-Quartz build ──▶ public/ (静态站点: sanitize 白名单 + CSP + 中文搜索索引)
+Quartz build ──▶ public/（静态站点、HTML 白名单、CSP、中文搜索）
         │
         ▼
-gh-pages / Docker 静态服务
+GitHub Pages / Docker
 ```
 
-- **扫描（scan）**：遍历 nLab 源树，以页面源路径为稳定主键写入 SQLite 状态库；
-  slug 只是输出属性（带唯一索引与 `-2`/`-3` 冲突后缀）；别名歧义保留候选列表；
-  扫描结束断言「有效源页面数 == 唯一 page_id 数」，防止静默丢页。
-- **状态机（严格）**：`discovered → queued → translating → translated → validated → published`；
-  失败走 `failed`（连续失败自动转 `needs_review`），上游更新走
-  `published → outdated → queued`。任何分块失败、截断、格式损坏或空输出
-  都**不会**进入 published，CLI 返回非零退出码。
-- **结构化翻译**：正文先做 markdown 结构保护（公式/代码/URL/wiki-link/HTML
-  替换为占位符），只把纯文本送入模型；按 token 预算切段；重组后校验
-  占位符完整性、中文比例、截断、代码块/公式数量；分块结果按
-  「源文+模型+提示词+词典」哈希缓存，可断点续跑。
-- **词典**：`external_glossary.json` 提供种子翻译（来自[香蕉空间](https://www.bananaspace.org)
-  Translist）；`dictionary.json`（人工补录）中的 `propn` 条目构成人名硬阻断白名单。
-- **发布**：Quartz 编译为静态站点；页面带逐页来源归属（源 URL、page_id、
-  抓取/翻译时间、模型与提示词版本）；HTML 经 rehype-sanitize 白名单过滤并附加 CSP。
+核心设计：
+
+- 源文件路径是稳定页面标识；slug 仅是带唯一约束的输出属性。
+- 页面遵循
+  `discovered → queued → translating → translated → validated → published`
+  状态机；失败、截断或结构损坏的结果不会发布。
+- 翻译前保护公式、代码、URL、wiki link 和 HTML；发布前再次比较公式、代码、
+  链接目标、HTML 与标题层级。
+- 分块缓存同时绑定源文、模型、提示词与词典版本，配置变化不会误用旧结果。
+- 发布页记录源 URL、源修订、内容哈希、抓取时间、模型、提示词版本与质量状态。
 
 ## 环境要求
 
-- Node.js ≥ 22、pnpm ≥ 11（`pnpm-workspace.yaml` 使用 pnpm 11 的 `allowBuilds`）
-- Python ≥ 3.11（依赖见 `pyproject.toml`：requests、urllib3、PyYAML；开发依赖 pytest、ruff）
-- [llama.cpp](https://github.com/ggml-org/llama.cpp)（`llama-server` 命令）及一个 GGUF 模型
-- （可选，强烈建议）NVIDIA GPU + 驱动，用于加速推理
+- Python 3.11 或更高版本
+- Node.js 22 或更高版本
+- pnpm 11（版本由 `package.json` 固定）
+- 翻译时需要兼容 OpenAI API 的服务、Ollama，或
+  [llama.cpp](https://github.com/ggml-org/llama.cpp) 的 `llama-server`
 
-### 模型与显存
-
-推理默认走 llama.cpp 的 OpenAI 兼容接口（`http://127.0.0.1:8080/v1`）。
-
-| 模型                                         | 大小   | 实测表现                                                                                        |
-| -------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------- |
-| `gemma-4-12B-it-qat-UD-Q4_K_XL.gguf`         | 6.7 GB | **推荐**。直出翻译、无需思考链，小段约 14s；术语需依赖词典注入                                  |
-| `DeepSeek-V4-Pro-Qwen3.5-9B-MTP-Q4_K_M.gguf` | 5.8 GB | 术语翻译更精准（预层/函子/层等），但思考链极长：小段约 117s，且默认 `max_tokens` 下**内容为空** |
-
-**结论**：日常翻译使用 gemma；若用 DeepSeek，须设置 `LLM_MAX_TOKENS>=4096`、
-`LLM_TIMEOUT>=600`（`manage.sh serve` 会按大小写不敏感的方式跳过
-`--reasoning-budget 0`）。两者在 RTX 5060（8 GB 显存）上均需把上下文窗口控制在
-`LLM_CTX=4096` 左右；`manage.sh serve` 默认启用量化 KV 缓存
-（`--cache-type-k q8_0 --cache-type-v q8_0`）。
+GPU 不是必需条件，但大规模本地翻译通常需要硬件加速。模型所需上下文、显存和
+生成 token 上限差异很大，应以所选模型的说明为准。
 
 ## 快速开始
 
 ```bash
-pnpm install                                # 安装 Quartz 依赖
-python3 -m pip install -e ".[dev]"          # 安装流水线依赖（含 pytest/ruff）
+corepack enable
+pnpm install --frozen-lockfile
+python3 -m pip install -e ".[dev]"
 
-./manage.sh sync-repo   # 克隆/同步 nLab 上游源
-./manage.sh scan        # 增量扫描，重建 SQLite 状态库（并导出 JSON）
-./manage.sh status      # 查看状态库统计
-./manage.sh audit       # （可选）交互式补录词典
-./manage.sh serve       # 前台启动 llama.cpp 推理服务（另开一个终端）
-./manage.sh translate   # 增量汉化（--limit N / --category C / --dry-run）
-./manage.sh build       # 编译 Quartz 静态站点
-./manage.sh deploy      # 部署到 gh-pages（默认需确认，--force 才强制推送）
+cp .env.example .env
+# 编辑 .env；本地 llama.cpp 至少需要设置 LLM_MODEL_PATH
+
+./manage.sh sync-repo
+./manage.sh scan
+./manage.sh status
 ```
+
+开始翻译时，在一个终端启动推理服务，再在另一个终端运行流水线：
+
+```bash
+./manage.sh serve
+./manage.sh translate --limit 10
+./manage.sh build
+```
+
+`manage.sh` 提供常用操作：
+
+| 命令        | 用途                                                |
+| ----------- | --------------------------------------------------- |
+| `sync-repo` | 浅克隆或快速前进同步 nLab 上游仓库                  |
+| `scan`      | 增量对账页面、别名和状态；大规模删除需要显式确认    |
+| `audit`     | 交互式维护人工词典                                  |
+| `tree`      | 输出分类树及待翻译列表                              |
+| `status`    | 显示状态库摘要                                      |
+| `translate` | 增量翻译；支持 `--limit`、`--category`、`--dry-run` |
+| `serve`     | 前台启动本地 llama.cpp 服务                         |
+| `build`     | 构建 Quartz 静态站点                                |
+| `deploy`    | 将 `public/` 推送到显式配置的 `gh-pages` 远程       |
+
+完整的状态导出、缓存清理、迁移、恢复和运行报告命令可通过
+`nlab-pipeline --help` 查看。
 
 ## 配置
 
-所有配置均可用环境变量或根目录 `.env` 覆盖（`manage.sh` 与 Python CLI 都会加载 `.env`），
-参见 `.env.example`。常用项：
+复制 [.env.example](.env.example) 为 `.env` 后按需覆盖默认值。`manage.sh`
+与 Python CLI 都会加载仓库根目录的 `.env`。
 
-| 变量                         | 默认值                           | 说明                                                |
-| ---------------------------- | -------------------------------- | --------------------------------------------------- |
-| `LLM_BASE_URL`               | `http://127.0.0.1:8080/v1`       | 推理服务地址                                        |
-| `LLM_BACKEND`                | `openai`                         | `openai`（llama.cpp）或 `ollama`                    |
-| `LLM_MODEL`                  | `gemma-4-12b-it`                 | 发送给服务的模型标识                                |
-| `LLM_MAX_TOKENS`             | `1024`                           | 每次请求最大生成 token（DeepSeek 需 ≥4096）         |
-| `LLM_CTX` / `LLM_MODEL_PATH` | `4096` / gemma GGUF 路径         | `manage.sh serve` 使用的上下文与模型文件            |
-| `MAX_WORKERS`                | `4`                              | 并发翻译请求数                                      |
-| `CHUNK_TARGET_TOKENS`        | `700`                            | 每个 LLM 请求的目标 token 预算                      |
-| `VALIDATE_MIN_CJK_RATIO`     | `0.05`                           | 分块最低中文占比（低于即判失败）                    |
-| `MAX_FAIL_COUNT`             | `3`                              | 连续失败次数达到后转入 `needs_review`               |
-| `DEPLOY_REMOTE`              | `origin`                         | `manage.sh deploy` 推送 gh-pages 的远程名           |
-| `NLAB_SITE_URL`              | `https://nlab-chinese.github.io` | 站点规范 URL（sitemap/RSS/OG），正式部署前必须设置  |
-| `NLAB_OG_IMAGES`             | 开启                             | 设为 `0` 关闭逐页 OG 图片生成（大规模语料建议关闭） |
+| 变量                     | 默认值                       | 说明                                   |
+| ------------------------ | ---------------------------- | -------------------------------------- |
+| `LLM_BACKEND`            | `openai`                     | `openai`/兼容服务或 `ollama`           |
+| `LLM_BASE_URL`           | `http://127.0.0.1:8080/v1`   | 推理服务地址                           |
+| `LLM_MODEL`              | `gemma-4-12b-it`             | 发送给服务的模型标识                   |
+| `LLM_MAX_TOKENS`         | `1024`                       | 单次请求最大生成 token                 |
+| `LLM_NUM_CTX`            | `8192`                       | Ollama 请求的上下文大小                |
+| `LLM_MODEL_PATH`         | `models/gemma-4-12b-it.gguf` | `manage.sh serve` 使用的 GGUF 文件     |
+| `LLM_CTX`                | `4096`                       | `llama-server` 上下文窗口              |
+| `MAX_WORKERS`            | `4`                          | 并发翻译请求数                         |
+| `CHUNK_TARGET_TOKENS`    | `700`                        | 每个翻译分块的目标 token 预算          |
+| `VALIDATE_MIN_CJK_RATIO` | `0.05`                       | 分块最低中文占比                       |
+| `MAX_FAIL_COUNT`         | `3`                          | 转入 `needs_review` 前允许的连续失败数 |
+| `DEPLOY_REMOTE`          | 未设置                       | `manage.sh deploy` 使用的 Git 远程名   |
+| `NLAB_SITE_URL`          | `nlab-chinese.github.io`     | 规范主机名及可选子路径                 |
+| `NLAB_REPOSITORY_URL`    | 未设置                       | 页脚中的项目源码链接                   |
+| `NLAB_OG_IMAGES`         | `1`                          | 设为 `0` 关闭逐页 OG 图片              |
 
-> 注意：本仓库 `origin` 指向 quartz 上游（只读）。若尚无自己的远程仓库，
-> `deploy` 前请先 `git remote add` 自己的仓库并设置 `DEPLOY_REMOTE`。
+人工词典默认位于 `scripts/dictionary.json`。经过授权的外部种子词典可通过
+`EXTERNAL_GLOSSARY_FILE` 在本地提供；仓库不分发许可证不明确的第三方词典。
 
 ## 目录结构
 
-```
-├── content/               # Quartz 站点内容（翻译输出，中英对照）
-├── nlab-content/          # nLab 上游源仓库（gitignored，clone 生成）
-├── src/nlab_pipeline/     # Python 流水线包
-│   ├── config.py          # 集中配置（环境变量/.env）
-│   ├── state.py           # SQLite 状态库（事务、状态机、缓存、备份、导出）
-│   ├── catalog.py         # 扫描/对账、别名、审计、目录树
-│   ├── cleaner.py         # Instiki 清理、slug、分类、链接策略
-│   ├── protector.py       # markdown 结构保护（公式/代码/链接占位符）
-│   ├── translator.py      # token 分块、Aho-Corasick 词典注入、校验、缓存
-│   ├── processor.py       # 状态机编排、YAML frontmatter、发布校验
-│   ├── recover.py         # 从 public/ HTML 恢复旧版已发布页面
-│   ├── llm.py             # OpenAI-compatible / Ollama 客户端（失败即抛错）
-│   └── cli.py             # 命令行入口（非零退出码约定）
-├── scripts/
-│   ├── cli.py             # 兼容入口（转接 src/nlab_pipeline.cli）
-│   ├── external_glossary.json # 外部术语种子词典（来自香蕉空间）
-│   └── nlab_glossary.json # 状态库 JSON 导出（由 scan/translate 生成）
-├── state/                 # SQLite 状态库（gitignored）
-├── tests/                 # pytest 单元测试
-├── quartz/                # Quartz v4 站点生成器（MIT，Jacky Zhao）
-├── manage.sh              # 编排脚本（薄封装）
-├── pyproject.toml         # Python 打包 + pytest/ruff 配置
-├── pnpm-workspace.yaml    # pnpm 构建设定
-├── quartz.config.ts       # Quartz 站点配置（sanitize/EnglishSection/CJK 字体）
-└── quartz.layout.ts       # Quartz 布局配置
+```text
+content/                  Quartz 内容与流水线发布结果
+nlab-content/             nLab 上游仓库（本地生成，不提交）
+src/nlab_pipeline/        Python 流水线包
+scripts/                  兼容入口、审计工具及本地词典
+state/                    SQLite 状态库及备份（不提交）
+tests/                    Python 测试
+quartz/                   Quartz 站点生成器及项目定制
+manage.sh                 常用操作封装
+quartz.config.ts          站点与插件配置
+quartz.layout.ts          页面布局
 ```
 
-## 测试与质量
+`public/`、状态库、日志、模型、上游仓库、依赖目录及 JSON 状态导出都是本地产物，
+不应进入提交。详细边界和日常运维见 [MAINTAINING.md](MAINTAINING.md)。
+
+## 质量检查
 
 ```bash
-python3 -m pytest                 # Python 单元测试
-ruff check src tests scripts/cli.py
-pnpm check                        # tsc + prettier
-pnpm test                         # Quartz 测试
+python3 -m ruff check src tests scripts/cli.py scripts/check_content.py scripts/check_docs.py
+python3 -m pytest
+python3 scripts/check_content.py
+python3 scripts/check_docs.py
+pnpm check
+pnpm test
+NLAB_OG_IMAGES=0 pnpm quartz build
 ```
+
+CI 会执行相同的 Python、文档、内容、TypeScript、Quartz 构建与 Docker 构建检查。
+测试和构建产生的 `public/`、`__pycache__/`、`.pytest_cache/`、
+`.ruff_cache/`、`.quartz-cache/` 与 `tsconfig.tsbuildinfo` 不应提交。
 
 ## 部署
 
-- **GitHub Actions**：`.github/workflows/ci.yml` 在 PR/推送时跑
-  ruff+pytest+pnpm check+pnpm test+build；`.github/workflows/deploy.yml`
-  构建后经 `actions/deploy-pages` 发布到 GitHub Pages
-  （在仓库 Variables 中设置 `NLAB_SITE_URL`）。
-- **Docker**：多阶段构建（pnpm 安装 → quartz build → 非 root 的静态服务），
-  `docker build -t nlab-chinese . && docker run -p 8080:8080 nlab-chinese`。
-- **manage.sh**：`./manage.sh deploy` 默认需确认且不强推；`--force` 才使用
-  `git push -f`。
+- GitHub Pages：部署工作流读取仓库变量 `NLAB_SITE_URL` 与
+  `NLAB_OG_IMAGES`，构建后使用 GitHub Pages artifact 发布。
+- Docker：
 
-## 内容授权与归属
+  ```bash
+  docker build --build-arg NLAB_SITE_URL=example.org -t nlab-chinese .
+  docker run --rm -p 8080:8080 nlab-chinese
+  ```
 
-- 程序代码：MIT（见 [LICENSE.txt](LICENSE.txt)）。
-- nLab 内容与译文：见 [ATTRIBUTION.md](ATTRIBUTION.md)（逐页归属字段）、
-  [DATA_POLICY.md](DATA_POLICY.md)（数据政策）、[NOTICE.md](NOTICE.md)（第三方内容）。
-- nLab 允许并鼓励注明来源的使用与分发，但尚未形成正式许可证共识；
-  正式发布前请与 nLab 确认镜像归属写法。
+- 手动部署：先添加有写权限的远程并在 `.env` 设置
+  `DEPLOY_REMOTE=pages`。脚本不会隐式使用 `origin`；`--force` 使用
+  `--force-with-lease`。
 
-## 流水线状态
+## 项目文档
 
-`nlab-pipeline status` 输出中央状态库统计。示例（2026-08 快照）：
+- [CONTRIBUTING.md](CONTRIBUTING.md)：开发、内容和 Pull Request 规范
+- [MAINTAINING.md](MAINTAINING.md)：状态备份、依赖更新、发布与清理手册
+- [SECURITY.md](SECURITY.md)：安全支持范围与私密报告
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)：社区行为准则
+- [DATA_POLICY.md](DATA_POLICY.md)：数据流、保留和删除说明
+- [ATTRIBUTION.md](ATTRIBUTION.md)：内容来源与逐页归属
+- [NOTICE.md](NOTICE.md)：第三方内容与软件声明
 
-- 总节点数：20728（源页面数与唯一 page_id 数断言一致）
-- 其中：20027 discovered、699 skipped（空壳/重定向桩）、2 published
-- 别名：74462 条；歧义别名 579 组（链接重写按「已发布且唯一」消歧，否则回链 nLab）
+## 许可与归属
+
+本仓库程序代码采用 [MIT License](LICENSE.txt)。`quartz/` 保留 Quartz 作者的
+MIT 版权与许可证副本。nLab 原文、机器译文和其他第三方内容不因此自动变为 MIT；
+使用或分发前请阅读 [ATTRIBUTION.md](ATTRIBUTION.md)、
+[DATA_POLICY.md](DATA_POLICY.md) 与 [NOTICE.md](NOTICE.md)。
+
+nLab 当前鼓励在遵循学术惯例并注明来源的前提下使用和分发其内容，但未形成更正式的
+统一许可证共识。公开运营镜像前，应持续核对 nLab 的最新说明和相关贡献者要求。

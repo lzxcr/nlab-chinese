@@ -1,5 +1,4 @@
 .DS_Store
-.gitignore
 node_modules
 public
 prof
@@ -15,12 +14,18 @@ nlab-content/
 logs/
 __pycache__/
 *.pyc
+*.egg-info/
+.coverage
+htmlcov/
 .env
 state/
+models/
+scripts/external_glossary.json
+scripts/nlab_glossary.json
+scripts/pending_review.json
 .pnpm-cache/
 .tools/
 .xdg/
 .pytest_cache/
-.npmrc
 package-lock.json
 .venv-lock/

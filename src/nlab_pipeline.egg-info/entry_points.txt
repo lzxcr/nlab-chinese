@@ -1,2 +1,0 @@
-[console_scripts]
-nlab-pipeline = nlab_pipeline.cli:main

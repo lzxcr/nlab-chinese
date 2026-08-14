@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ version = "1.0.0"
 description = "nLab-Chinese: 自动化中英对照翻译流水线（扫描/状态库/结构化翻译/校验/发布）"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE.txt"]
 authors = [{ name = "nLab-Chinese contributors" }]
 dependencies = [
     "requests>=2.31,<3",
@@ -23,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-nlab-pipeline = "nlab_pipeline.cli:main"
+nlab-pipeline = "nlab_pipeline.entrypoint:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }

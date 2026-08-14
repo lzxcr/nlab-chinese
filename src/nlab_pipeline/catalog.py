@@ -82,7 +82,12 @@ def _relative_path(root: str) -> str:
         return root.replace(os.sep, "/")
 
 
-def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
+def scan_and_sync_catalog(
+    store: StateStore,
+    *,
+    force: bool = False,
+    allow_large_prune: bool = False,
+) -> int:
     """Walk the nLab source tree and reconcile it against the state database.
 
     Returns the number of pages scanned.  Raises on integrity failure.
@@ -96,6 +101,7 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
 
     # Record the upstream revision this snapshot was scanned from (shallow
     # clone: HEAD is the only commit, but it is still the exact provenance).
+    revision = store.get_meta("source_revision") or ""
     try:
         import subprocess
 
@@ -116,6 +122,7 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
     processed = 0
     page_batch: list[dict] = []
     alias_batch: list[tuple[str, list[str]]] = []
+    read_failures: list[str] = []
 
     def _flush() -> None:
         nonlocal page_batch, alias_batch
@@ -127,7 +134,11 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
             alias_batch = []
         store.checkpoint()
 
-    for root, _dirs, files in os.walk(pages_dir):
+    for root, dirs, files in os.walk(pages_dir):
+        # Stable traversal makes slug collision suffixes reproducible across
+        # filesystems and repeated clean installations.
+        dirs.sort()
+        files.sort()
         if "name" not in files or "content.md" not in files:
             continue
         page_id = _relative_path(root)
@@ -138,8 +149,10 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
             true_title = open(name_file, encoding="utf-8").read().strip()
             raw_content = open(content_file, encoding="utf-8").read()
         except (OSError, UnicodeError) as exc:
-            # Page-level read failure: skip this file, keep scanning.
+            # Keep scanning to report all bad inputs, but never prune after an
+            # incomplete read: an unreadable subtree must not look deleted.
             logger.warning("读取物理页面失败 %s: %s", root, exc)
+            read_failures.append(f"{root}: {exc}")
             continue
         # Database errors below are systemic and deliberately abort the scan
         # instead of being swallowed page by page.
@@ -177,6 +190,7 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
             new_page["source_path"] = page_id
             new_page["source_size"] = os.path.getsize(content_file)
             new_page["slug"] = slug
+            new_page["source_revision"] = revision
 
             if is_junk:
                 _retire_junk_entry(store, new_page)
@@ -186,12 +200,33 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
                         new_page["status"] = "outdated"
                     elif existing["status"] in ("skipped",):
                         new_page["status"] = "discovered"
+                    elif existing["status"] in {"failed", "needs_review"}:
+                        # Changed input starts a fresh attempt instead of
+                        # inheriting the previous source's failure budget.
+                        new_page["status"] = "queued"
+                        new_page["fail_count"] = 0
+                        new_page["last_error"] = ""
                 if existing["slug"] != slug:
                     # Output path changed: retire the old file, rewrite later.
                     _remove_output_file(existing)
                     if existing["status"] == "published":
                         new_page["status"] = "queued"
                     logger.info("slug 更新: %s -> %s (%s)", existing["slug"], slug, true_title)
+                if (
+                    existing["category_primary"] != primary
+                    or existing["category_secondary"] != secondary
+                ):
+                    # Category folders are part of the output path.  Retire
+                    # the old location and rebuild instead of leaving a
+                    # duplicate published page behind.
+                    _remove_output_file(existing)
+                    if existing["status"] == "published":
+                        new_page["status"] = "queued"
+                    logger.info(
+                        "类目更新: %s/%s -> %s/%s (%s)",
+                        existing["category_primary"], existing["category_secondary"],
+                        primary, secondary, true_title,
+                    )
                 if existing["status"] == "skipped" and not is_junk:
                     new_page["status"] = "discovered"
                 # Backfill the title translation from the dictionaries when
@@ -203,7 +238,7 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
                     if initial_cn:
                         new_page["chinese_translation"] = initial_cn
 
-            if _page_changed(existing, new_page):
+            if force or _page_changed(existing, new_page):
                 new_page["fetched_at"] = iso_now()
                 page_batch.append(new_page)
             if store.get_aliases(page_id) != aliases:
@@ -226,6 +261,7 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
                     "source_path": page_id,
                     "source_size": os.path.getsize(content_file),
                     "fetched_at": iso_now(),
+                    "source_revision": revision,
                 }
             )
             alias_batch.append((page_id, aliases))
@@ -236,12 +272,29 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
 
     _flush()
 
+    if read_failures:
+        preview = "\n".join(f"  - {item}" for item in read_failures[:20])
+        raise RuntimeError(
+            f"扫描期间有 {len(read_failures)} 个源页面无法读取；"
+            "已中止删除协调，以免误删状态。\n" + preview
+        )
+
     # Prune entries whose pages vanished upstream; also remove stale outputs.
-    for page in store.get_pages():
-        if page["page_id"] not in scanned_ids:
-            logger.info("上游已移除/重命名，清理冗余词条: %s (%s)", page["page_id"], page["true_title"])
-            _remove_output_file(page)
-            store.delete_page(page["page_id"])
+    all_pages = store.get_pages()
+    missing_pages = [page for page in all_pages if page["page_id"] not in scanned_ids]
+    # Allow a handful of ordinary deletions, but cap the automatic allowance
+    # even for very large catalogs.
+    prune_limit = min(100, max(1, int(len(all_pages) * 0.05)))
+    if len(missing_pages) > prune_limit and not allow_large_prune:
+        raise RuntimeError(
+            f"本次扫描将删除 {len(missing_pages)}/{len(all_pages)} 个状态词条，"
+            f"超过安全阈值 {prune_limit}。确认上游快照完整后重试 "
+            "'scan --allow-large-prune'。"
+        )
+    for page in missing_pages:
+        logger.info("上游已移除/重命名，清理冗余词条: %s (%s)", page["page_id"], page["true_title"])
+        _remove_output_file(page)
+        store.delete_page(page["page_id"])
 
     # Count assertion: valid source pages must equal unique page ids.
     db_ids = {p["page_id"] for p in store.get_pages()}
@@ -265,6 +318,7 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
 _COMPARED_FIELDS = (
     "true_title", "chinese_translation", "category_primary", "category_secondary",
     "slug", "status", "mode", "source_md5", "source_path", "source_size",
+    "source_revision",
 )
 
 

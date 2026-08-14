@@ -76,12 +76,17 @@ class LLMClient:
         """Return True when the backend responds to a health check."""
         try:
             if self.settings.llm_backend == "ollama":
-                self._session.get(f"{self.settings.llm_base_url}/api/tags", timeout=5)
+                response = self._session.get(
+                    f"{self.settings.llm_base_url}/api/tags", timeout=5
+                )
             else:
-                health = self.settings.llm_base_url.replace("/v1", "") + "/health"
-                self._session.get(health, timeout=5)
+                base = self.settings.llm_base_url.rstrip("/")
+                if base.endswith("/v1"):
+                    base = base[:-3]
+                response = self._session.get(base + "/health", timeout=5)
+            response.raise_for_status()
             return True
-        except Exception:
+        except requests.RequestException:
             return False
 
     # ------------------------------------------------------------------ #

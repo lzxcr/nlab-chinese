@@ -29,7 +29,9 @@ export default (() => {
 
     // Url of current page
     const socialUrl =
-      fileData.slug === "404" ? url.toString() : joinSegments(url.toString(), fileData.slug!)
+      fileData.slug === "404" || fileData.slug === "index"
+        ? url.toString()
+        : joinSegments(url.toString(), fileData.slug!)
 
     const usesCustomOgImage = ctx.cfg.plugins.emitters.some(
       (e) => e.name === CustomOgImagesEmitterName,
@@ -50,17 +52,16 @@ export default (() => {
             )}
           </>
         )}
-        <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossOrigin="anonymous" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         {/* nLab-Chinese: defence-in-depth CSP.  Content HTML is already
             whitelisted by the Sanitize transformer; this blocks anything else
             (persistent XSS, third-party script injection) at the browser. */}
         <meta
           http-equiv="Content-Security-Policy"
-          content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https: blob:; font-src 'self' data: https:; connect-src 'self' https:; object-src 'none'; base-uri 'self'; form-action 'self'"
+          content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https: blob:; font-src 'self' data: https://cdn.jsdelivr.net; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests"
         />
 
-        <meta name="og:site_name" content={cfg.pageTitle}></meta>
+        <meta property="og:site_name" content={cfg.pageTitle}></meta>
         <meta property="og:title" content={title} />
         <meta property="og:type" content="website" />
         <meta name="twitter:card" content="summary_large_image" />
@@ -76,14 +77,15 @@ export default (() => {
             <meta name="twitter:image" content={ogImageDefaultPath} />
             <meta
               property="og:image:type"
-              content={`image/${getFileExtension(ogImageDefaultPath) ?? "png"}`}
+              content={`image/${(getFileExtension(ogImageDefaultPath) ?? "png").replace(/^\./, "")}`}
             />
           </>
         )}
 
         {cfg.baseUrl && (
           <>
-            <meta property="twitter:domain" content={cfg.baseUrl}></meta>
+            <link rel="canonical" href={socialUrl}></link>
+            <meta property="twitter:domain" content={url.hostname}></meta>
             <meta property="og:url" content={socialUrl}></meta>
             <meta property="twitter:url" content={socialUrl}></meta>
           </>

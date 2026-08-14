@@ -163,8 +163,15 @@ def fix_wikilinks(
         if candidates:
             pool = [c for c in candidates if c.get("status") == "published"]
             if pool:
-                best = max(pool, key=lambda c: _candidate_score(c, target))
-                if best.get("slug"):
+                scored = [(candidate, _candidate_score(candidate, target)) for candidate in pool]
+                best_score = max(score for _, score in scored)
+                best_candidates = [
+                    candidate for candidate, score in scored if score == best_score
+                ]
+                # Equal-best published candidates are genuinely ambiguous;
+                # link upstream instead of depending on database row order.
+                if len(best_candidates) == 1 and best_candidates[0].get("slug"):
+                    best = best_candidates[0]
                     display_text = best.get("chinese_translation") or display
                     return f"[[{best['slug']}|{display_text}]]"
         # Fallback: absolute link to the upstream nLab page.

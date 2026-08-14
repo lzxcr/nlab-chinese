@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, v4]
   workflow_dispatch:
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
         env:
           # Canonical URL for sitemap/RSS/OG. Set this in the repository
           # secrets/variables to your real domain.
-          NLAB_SITE_URL: ${{ vars.NLAB_SITE_URL || 'https://nlab-chinese.github.io' }}
+          NLAB_SITE_URL: ${{ vars.NLAB_SITE_URL || 'nlab-chinese.github.io' }}
           NLAB_OG_IMAGES: ${{ vars.NLAB_OG_IMAGES || '0' }}
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

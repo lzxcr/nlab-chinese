@@ -10,7 +10,7 @@ Environment variables (all optional):
     STATE_FILE             path to the SQLite state database
     GLOSSARY_FILE          path of the JSON export of the state database
     DICTIONARY_FILE        manually curated dictionary (propn hard block-list)
-    EXTERNAL_GLOSSARY_FILE seed term dictionary (banana space translist)
+    EXTERNAL_GLOSSARY_FILE optional, locally authorised seed term dictionary
     NON_TRANSLATABLE_FILE  extra hard block-list file
     PENDING_REVIEW_FILE    pending-review dump
     LOG_DIR                log directory
@@ -35,6 +35,7 @@ import os
 from dataclasses import dataclass
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from urllib.parse import urlparse
 
 # --------------------------------------------------------------------------- #
 # Paths
@@ -44,7 +45,7 @@ PROJECT_ROOT = PACKAGE_DIR.parents[1]                 # repository root
 
 # Bump whenever the prompt, chunking strategy or validation rules change in a
 # way that invalidates previously cached translations.
-PROMPT_VERSION = "structured-v1"
+PROMPT_VERSION = "structured-v2"
 
 
 def _env(key: str, default: str = "") -> str:
@@ -120,6 +121,36 @@ class Settings:
     validate_min_cjk_ratio: float
     max_fail_count: int
 
+    def __post_init__(self) -> None:
+        errors: list[str] = []
+        if self.llm_backend not in {"openai", "openai-compatible", "ollama"}:
+            errors.append(f"LLM_BACKEND 不支持: {self.llm_backend!r}")
+        for name, value in (
+            ("LLM_BASE_URL", self.llm_base_url),
+            ("NLAB_BASE_URL", self.nlab_base_url),
+        ):
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                errors.append(f"{name} 必须是完整的 HTTP(S) URL")
+        if self.max_workers < 1:
+            errors.append("MAX_WORKERS 必须 >= 1")
+        if self.chunk_target_tokens < 1 or self.chunk_max_tokens < 1:
+            errors.append("CHUNK_TARGET_TOKENS/CHUNK_MAX_TOKENS 必须为正整数")
+        elif self.chunk_target_tokens > self.chunk_max_tokens:
+            errors.append("CHUNK_TARGET_TOKENS 不得大于 CHUNK_MAX_TOKENS")
+        if self.num_ctx < 1 or self.max_tokens < 1 or self.request_timeout < 1:
+            errors.append("LLM_NUM_CTX/LLM_MAX_TOKENS/LLM_TIMEOUT 必须为正整数")
+        if not 0 <= self.temperature <= 2:
+            errors.append("LLM_TEMPERATURE 必须介于 0 和 2")
+        if not 0 < self.top_p <= 1:
+            errors.append("LLM_TOP_P 必须介于 0（不含）和 1")
+        if not 0 <= self.validate_min_cjk_ratio <= 1:
+            errors.append("VALIDATE_MIN_CJK_RATIO 必须介于 0 和 1")
+        if self.max_fail_count < 1:
+            errors.append("MAX_FAIL_COUNT 必须 >= 1")
+        if errors:
+            raise ValueError("配置无效: " + "; ".join(errors))
+
     @classmethod
     def from_env(cls) -> Settings:
         return cls(
@@ -150,7 +181,7 @@ class Settings:
             llm_api_key=_env("LLM_API_KEY", ""),
             # For the "openai"/llama.cpp backend this is only a label (the server
             # loads the GGUF file given to manage.sh serve).  For "ollama" it is the
-            # actual model name.  gemma-4-12b-it is the recommended translator.
+            # actual model name. The default remains only a configurable label.
             llm_model=_env("LLM_MODEL", "gemma-4-12b-it"),
             temperature=_env_float("LLM_TEMPERATURE", 0.0),
             top_p=_env_float("LLM_TOP_P", 0.1),

@@ -15,13 +15,12 @@ from pathlib import Path
 
 from .cleaner import clean_nlab_garbage, fix_wikilinks, normalize_headings
 from .config import logger, settings
-from .processor import _bilingual_body, build_frontmatter
+from .processor import PublicationError, _output_path, publish_page
+from .protector import protected_spans
 from .state import StateStore
 
-# Same-line display math, lone $$ lines (rendered as empty display math by
-# the old pipeline), and inline $...$.
-_MATH_RE = re.compile(r"\$\$[^\n]*?\$\$|\$\$|\$[^\$\n]+?\$")
 _MATH_MARK = re.compile(r"@@MATH:(\d+)@@")
+_MATH_KINDS = {"math_block", "math_bracket", "math_paren", "math_inline", "latex_env"}
 
 
 class _MdWriter(HTMLParser):
@@ -194,7 +193,7 @@ def recover_translation(html: str, original_md: str) -> str:
     # Normalise heading artifacts introduced by old broken renders.
     md = re.sub(r"^# # ", "## ", md, flags=re.MULTILINE)
     md = re.sub(r"^(#{1,6})(?=[^\s#])", r"\1 ", md, flags=re.MULTILINE)
-    maths = _MATH_RE.findall(original_md)
+    maths = [value for kind, value in protected_spans(original_md) if kind in _MATH_KINDS]
     used = counter[0]
     if used > len(maths):
         raise ValueError(f"数学公式数量不匹配: HTML {used} > 原文 {len(maths)}")
@@ -214,7 +213,7 @@ def recover_pages(store: StateStore, html_dir: Path, *, dry_run: bool = False) -
     published = store.pages_in_status("published")
     recovered = 0
     for page in published:
-        target = settings.content_dir / page["category_primary"] / page["category_secondary"]             / (page["slug"] + ".md")
+        target = _output_path(page)
         if target.exists():
             continue
         # locate built html: categories may have changed since the old build,
@@ -222,7 +221,9 @@ def recover_pages(store: StateStore, html_dir: Path, *, dry_run: bool = False) -
         html_path = html_dir / page["category_primary"] / page["category_secondary"]             / (page["slug"] + ".html")
         if not html_path.exists():
             matches = list(html_dir.rglob(page["slug"] + ".html")) if html_dir.is_dir() else []
-            html_path = matches[0] if matches else None
+            html_path = matches[0] if len(matches) == 1 else None
+            if len(matches) > 1:
+                logger.error("同一 slug 匹配到多个构建产物，拒绝猜测: %s", page["slug"])
         if not html_path:
             logger.warning("找不到构建产物，跳过恢复: %s", page["true_title"])
             continue
@@ -264,12 +265,20 @@ def recover_pages(store: StateStore, html_dir: Path, *, dry_run: bool = False) -
         if dry_run:
             logger.info("[dry-run] 将恢复: %s (%s)", page["true_title"], target)
             continue
-        page["source_revision"] = store.get_meta("source_revision") or ""
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(
-            build_frontmatter(page) + "\n" + _bilingual_body(page["true_title"], translated, original),
-            encoding="utf-8",
-        )
+        try:
+            publish_page(
+                store,
+                page,
+                translated,
+                original,
+                translator_model="legacy-recovery-unknown",
+                prompt_version="legacy-html-recovery-v1",
+            )
+        except PublicationError as exc:
+            store.record_error(None, page["page_id"], f"recover-{exc.stage}", str(exc))
+            store.transition(page["page_id"], "queued")
+            logger.error("恢复内容未通过发布门禁 %s: %s", page["true_title"], exc)
+            continue
         recovered += 1
         logger.info("已恢复页面: %s -> %s", page["true_title"], target)
     return recovered

@@ -26,12 +26,13 @@ import sqlite3
 import threading
 import time
 from collections.abc import Iterable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 from .config import settings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Strict publication state machine.
 #
@@ -47,14 +48,14 @@ VALID_STATUSES = {
 
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "discovered": {"queued", "skipped", "failed"},
-    "queued": {"translating", "skipped"},
-    "translating": {"translated", "failed", "queued"},
-    "translated": {"validated", "failed"},
-    "validated": {"published", "failed"},
+    "queued": {"translating", "skipped", "failed"},
+    "translating": {"translated", "failed", "queued", "skipped"},
+    "translated": {"validated", "failed", "skipped"},
+    "validated": {"published", "failed", "skipped"},
     "published": {"outdated", "queued", "skipped"},
-    "outdated": {"queued", "skipped", "translating"},
+    "outdated": {"queued", "skipped", "translating", "failed"},
     "failed": {"queued", "needs_review", "skipped", "translating"},
-    "needs_review": {"queued", "published", "skipped", "translating"},
+    "needs_review": {"queued", "validated", "skipped", "translating"},
     "skipped": {"queued", "discovered"},
 }
 
@@ -80,7 +81,10 @@ CREATE TABLE IF NOT EXISTS pages (
     published_at        TEXT,
     last_error          TEXT,
     fail_count          INTEGER NOT NULL DEFAULT 0,
-    review_note         TEXT
+    review_note         TEXT,
+    source_revision     TEXT NOT NULL DEFAULT '',
+    translator_model    TEXT NOT NULL DEFAULT '',
+    prompt_version      TEXT NOT NULL DEFAULT ''
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_pages_slug ON pages(slug);
 CREATE INDEX IF NOT EXISTS idx_pages_status ON pages(status);
@@ -136,7 +140,10 @@ def iso_now() -> str:
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), timeout=30)
+    # Translation chunks run in a thread pool.  Access remains serialized by
+    # StateStore._lock, while check_same_thread=False permits those guarded
+    # cache reads/writes to use this connection safely.
+    conn = sqlite3.connect(str(db_path), timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -155,18 +162,45 @@ class StateStore:
     def __init__(self, db_path: Path | None = None) -> None:
         self.path = Path(db_path or settings.state_file)
         self._lock = threading.RLock()
-        self.conn = _connect(self.path)
+        try:
+            self.conn = _connect(self.path)
+        except sqlite3.DatabaseError as exc:
+            raise StateCorruptError(f"无法打开状态库 {self.path}: {exc}") from exc
 
     # ------------------------------------------------------------------ #
     # Lifecycle / integrity
     # ------------------------------------------------------------------ #
     def init_schema(self) -> None:
         with self._lock, self.conn:
+            existing_version = None
+            try:
+                row = self.conn.execute(
+                    "SELECT value FROM meta WHERE key = 'schema_version'"
+                ).fetchone()
+                existing_version = int(row[0]) if row else None
+            except sqlite3.OperationalError:
+                pass
+            except (TypeError, ValueError) as exc:
+                raise StateCorruptError("状态库 schema_version 损坏，拒绝覆盖") from exc
+            if existing_version is not None and existing_version > SCHEMA_VERSION:
+                raise StateError(
+                    f"状态库 schema v{existing_version} 高于程序支持的 v{SCHEMA_VERSION}，拒绝降级打开"
+                )
             self.conn.executescript(_SCHEMA)
+            self._ensure_column("pages", "source_revision", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("pages", "translator_model", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column("pages", "prompt_version", "TEXT NOT NULL DEFAULT ''")
             self.conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES('schema_version', ?)",
                 (str(SCHEMA_VERSION),),
             )
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        columns = {
+            row["name"] for row in self.conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def check_integrity(self) -> None:
         """Abort on corruption instead of silently starting from scratch."""
@@ -187,6 +221,30 @@ class StateStore:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+    @contextmanager
+    def exclusive_operation(self, operation: str):
+        """Hold a non-blocking process lock for a mutating CLI operation."""
+        try:
+            import fcntl
+        except ImportError as exc:  # pragma: no cover - Linux is the supported runtime
+            raise StateError("当前平台不支持状态库进程锁") from exc
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise StateError(
+                    f"另一个管道操作正在运行，拒绝并发执行: {operation}"
+                ) from exc
+            yield
+        finally:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            finally:
+                os.close(descriptor)
 
     # ------------------------------------------------------------------ #
     # Legacy migration
@@ -215,6 +273,8 @@ class StateStore:
         collision suffixing (the legacy keys were slugs and already collided,
         silently overwriting each other).
         """
+        if self.has_pages():
+            raise StateError("状态库非空，拒绝导入旧 JSON 以避免覆盖现有数据")
         if not legacy_path.exists():
             return 0, 0
         try:
@@ -225,7 +285,19 @@ class StateStore:
                 " - 请修复或移除该文件后重试。"
             ) from exc
 
-        if isinstance(data, dict) and data.get("schema_version") == SCHEMA_VERSION:
+        if not isinstance(data, dict):
+            raise StateCorruptError(f"旧状态库 JSON 根节点必须是对象: {legacy_path}")
+
+        export_version = data.get("schema_version")
+        if isinstance(export_version, int) and export_version > SCHEMA_VERSION:
+            raise StateCorruptError(
+                f"旧状态导出为 schema v{export_version}，高于程序支持的 "
+                f"v{SCHEMA_VERSION}，拒绝降级导入: {legacy_path}"
+            )
+        # Export envelopes were introduced in schema v2.  Accept every
+        # supported envelope version so a fresh checkout can migrate forward
+        # without first creating an old-version SQLite database.
+        if isinstance(data.get("pages"), dict):
             entries = [
                 (page_id, meta) for page_id, meta in data.get("pages", {}).items()
                 if isinstance(meta, dict) and meta.get("source_path")
@@ -240,6 +312,8 @@ class StateStore:
 
         slug_seen: dict[str, int] = {}
         imported = skipped = 0
+        rows: list[tuple] = []
+        alias_items: list[tuple[str, list[str]]] = []
         for legacy_key, meta in entries:
             source_path = str(meta.get("source_path", "")).strip()
             # The stable id is the source path (the legacy key was a slug and
@@ -254,12 +328,17 @@ class StateStore:
             if status not in VALID_STATUSES:
                 status = "discovered"
             category = meta.get("category") or {}
-            self.conn.execute(
-                """INSERT OR REPLACE INTO pages
-                   (page_id, true_title, chinese_translation, category_primary,
-                    category_secondary, slug, status, mode, source_md5,
-                    source_path, last_error, fail_count)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            if not isinstance(category, dict):
+                raise StateCorruptError(f"旧状态词条 {page_id} 的 category 不是对象")
+            try:
+                fail_count = int(meta.get("fail_count") or 0)
+                source_size = int(meta.get("source_size") or 0)
+            except (TypeError, ValueError) as exc:
+                raise StateCorruptError(f"旧状态词条 {page_id} 的数值字段无效") from exc
+            aliases = meta.get("aliases") or [title]
+            if not isinstance(aliases, list) or not all(isinstance(a, str) for a in aliases):
+                raise StateCorruptError(f"旧状态词条 {page_id} 的 aliases 必须是字符串数组")
+            rows.append(
                 (
                     page_id,
                     title,
@@ -271,13 +350,30 @@ class StateStore:
                     str(meta.get("mode", "auto")),
                     str(meta.get("source_md5_or_sha", "")),
                     source_path,
+                    source_size,
+                    meta.get("fetched_at"),
+                    meta.get("translated_at"),
+                    meta.get("published_at"),
                     str(meta.get("last_error", "")),
-                    int(meta.get("fail_count", 0)),
-                ),
+                    fail_count,
+                    str(meta.get("source_revision", "")),
+                    str(meta.get("translator_model", "")),
+                    str(meta.get("prompt_version", "")),
+                )
             )
-            self._set_aliases(page_id, meta.get("aliases") or [title])
+            alias_items.append((page_id, aliases))
             imported += 1
-        self.conn.commit()
+        sql = """INSERT INTO pages
+                 (page_id, true_title, chinese_translation, category_primary,
+                  category_secondary, slug, status, mode, source_md5,
+                  source_path, source_size, fetched_at, translated_at,
+                  published_at, last_error, fail_count, source_revision,
+                  translator_model, prompt_version)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+        with self._lock, self.conn:
+            self.conn.executemany(sql, rows)
+            for page_id, aliases in alias_items:
+                self._set_aliases(page_id, aliases)
         return imported, skipped
 
     @staticmethod
@@ -314,12 +410,14 @@ class StateStore:
                    (page_id, true_title, chinese_translation, category_primary,
                     category_secondary, slug, status, mode, source_md5,
                     source_path, source_size, fetched_at, last_error, fail_count,
-                    review_note, translated_at, published_at)
+                    review_note, translated_at, published_at, source_revision,
+                    translator_model, prompt_version)
                    VALUES (:page_id, :true_title, :chinese_translation,
                            :category_primary, :category_secondary, :slug,
                            :status, :mode, :source_md5, :source_path,
                            :source_size, :fetched_at, :last_error, :fail_count,
-                           :review_note, :translated_at, :published_at)
+                           :review_note, :translated_at, :published_at,
+                           :source_revision, :translator_model, :prompt_version)
                    ON CONFLICT(page_id) DO UPDATE SET
                      true_title=excluded.true_title,
                      chinese_translation=excluded.chinese_translation,
@@ -336,7 +434,10 @@ class StateStore:
                      fail_count=excluded.fail_count,
                      review_note=excluded.review_note,
                      translated_at=excluded.translated_at,
-                     published_at=excluded.published_at""",
+                     published_at=excluded.published_at,
+                     source_revision=excluded.source_revision,
+                     translator_model=excluded.translator_model,
+                     prompt_version=excluded.prompt_version""",
                 {
                     "page_id": page["page_id"],
                     "true_title": page["true_title"],
@@ -355,6 +456,9 @@ class StateStore:
                     "review_note": page.get("review_note"),
                     "translated_at": page.get("translated_at"),
                     "published_at": page.get("published_at"),
+                    "source_revision": page.get("source_revision", ""),
+                    "translator_model": page.get("translator_model", ""),
+                    "prompt_version": page.get("prompt_version", ""),
                 },
             )
 
@@ -394,6 +498,7 @@ class StateStore:
             "category_secondary", "slug", "status", "mode", "source_md5",
             "source_path", "source_size", "fetched_at", "translated_at",
             "published_at", "last_error", "fail_count", "review_note",
+            "source_revision", "translator_model", "prompt_version",
         }
         columns = [k for k in fields if k in allowed]
         if not columns:
@@ -408,15 +513,17 @@ class StateStore:
         if not pages:
             return
         sql = """INSERT INTO pages
-                 (page_id, true_title, chinese_translation, category_primary,
-                  category_secondary, slug, status, mode, source_md5,
-                  source_path, source_size, fetched_at, last_error, fail_count,
-                  review_note, translated_at, published_at)
+                  (page_id, true_title, chinese_translation, category_primary,
+                   category_secondary, slug, status, mode, source_md5,
+                   source_path, source_size, fetched_at, last_error, fail_count,
+                   review_note, translated_at, published_at, source_revision,
+                   translator_model, prompt_version)
                  VALUES (:page_id, :true_title, :chinese_translation,
                          :category_primary, :category_secondary, :slug,
                          :status, :mode, :source_md5, :source_path,
                          :source_size, :fetched_at, :last_error, :fail_count,
-                         :review_note, :translated_at, :published_at)
+                         :review_note, :translated_at, :published_at,
+                         :source_revision, :translator_model, :prompt_version)
                  ON CONFLICT(page_id) DO UPDATE SET
                    true_title=excluded.true_title,
                    chinese_translation=excluded.chinese_translation,
@@ -433,9 +540,28 @@ class StateStore:
                    fail_count=excluded.fail_count,
                    review_note=excluded.review_note,
                    translated_at=excluded.translated_at,
-                   published_at=excluded.published_at"""
+                   published_at=excluded.published_at,
+                   source_revision=excluded.source_revision,
+                   translator_model=excluded.translator_model,
+                   prompt_version=excluded.prompt_version"""
+        optional_defaults: dict[str, Any] = {
+            "chinese_translation": "",
+            "mode": "auto",
+            "source_md5": "",
+            "source_size": 0,
+            "fetched_at": None,
+            "last_error": "",
+            "fail_count": 0,
+            "review_note": None,
+            "translated_at": None,
+            "published_at": None,
+            "source_revision": "",
+            "translator_model": "",
+            "prompt_version": "",
+        }
+        normalized = [{**optional_defaults, **page} for page in pages]
         with self._lock, self.conn:
-            self.conn.executemany(sql, pages)
+            self.conn.executemany(sql, normalized)
 
     def set_aliases_bulk(self, items: list[tuple[str, list[str]]]) -> None:
         """Replace the aliases of many pages in a single transaction."""
@@ -554,7 +680,13 @@ class StateStore:
 
     def pending_translation(self, limit: int | None = None,
                             category: str | None = None) -> list[dict]:
-        statuses = ("discovered", "queued", "outdated", "failed", "translating")
+        # translated/validated can remain after a process crash.  The
+        # processor reconciles those intermediate states before selecting
+        # work; keeping them visible here prevents permanently stranded rows.
+        statuses = (
+            "discovered", "queued", "outdated", "failed", "translating",
+            "translated", "validated",
+        )
         pages = self.pages_in_status(*statuses)
         if category:
             pages = [
@@ -607,6 +739,10 @@ class StateStore:
                 (key, translated, model, _now()),
             )
 
+    def cache_delete(self, key: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute("DELETE FROM chunk_cache WHERE cache_key = ?", (key,))
+
     def cache_prune(self, keep_models: list[str] | None = None) -> int:
         with self._lock, self.conn:
             if keep_models:
@@ -618,6 +754,28 @@ class StateStore:
             else:
                 cur = self.conn.execute("DELETE FROM chunk_cache")
             return int(cur.rowcount)
+
+    def cache_count(self) -> int:
+        with self._lock:
+            return int(self.conn.execute("SELECT COUNT(*) FROM chunk_cache").fetchone()[0])
+
+    def recent_runs(self, limit: int = 10) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, command, started_at, finished_at, exit_code, stats FROM runs "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def recent_errors(self, limit: int = 20) -> list[dict]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT page_id, stage, message, created_at FROM errors "
+                "ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------ #
     # Backup / export
@@ -636,13 +794,15 @@ class StateStore:
     def export_json(self, path: Path) -> bool:
         """Write the human-readable JSON export; True when it changed."""
         pages = self.get_pages()
+        with self._lock:
+            alias_rows = self.conn.execute(
+                "SELECT page_id, alias_raw FROM aliases ORDER BY page_id, alias_raw"
+            ).fetchall()
+        aliases_by_page: dict[str, list[str]] = {}
+        for row in alias_rows:
+            aliases_by_page.setdefault(row["page_id"], []).append(row["alias_raw"])
         for page in pages:
-            with self._lock:
-                rows = self.conn.execute(
-                    "SELECT alias_raw FROM aliases WHERE page_id = ? ORDER BY alias_raw",
-                    (page["page_id"],),
-                ).fetchall()
-            page["aliases"] = sorted({r["alias_raw"] for r in rows})
+            page["aliases"] = sorted(set(aliases_by_page.get(page["page_id"], [])))
             if page["true_title"] not in page["aliases"]:
                 page["aliases"].append(page["true_title"])
         payload = {
@@ -668,6 +828,9 @@ class StateStore:
                     "fetched_at": page.get("fetched_at"),
                     "translated_at": page.get("translated_at"),
                     "published_at": page.get("published_at"),
+                    "source_revision": page.get("source_revision", ""),
+                    "translator_model": page.get("translator_model", ""),
+                    "prompt_version": page.get("prompt_version", ""),
                     "last_error": page.get("last_error"),
                     "fail_count": page.get("fail_count"),
                 }
@@ -691,6 +854,10 @@ class StateStore:
             except OSError:
                 pass
         tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text(text, encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(tmp, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
         return True

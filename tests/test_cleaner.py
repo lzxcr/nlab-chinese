@@ -75,6 +75,20 @@ def test_link_policy_ambiguous_alias_prefers_exact_published():
     assert "[[type-a|类型A]]" in out
 
 
+def test_link_policy_equal_published_candidates_does_not_guess():
+    lookup = {
+        "type": [
+            {"slug": "type-a", "status": "published", "chinese_translation": "类型A",
+             "english_raw": "type", "true_title": "type theory A"},
+            {"slug": "type-b", "status": "published", "chinese_translation": "类型B",
+             "english_raw": "type", "true_title": "type theory B"},
+        ],
+    }
+    out = fix_wikilinks("A [[type]] here.", lookup, "https://ncatlab.org/nlab/show/")
+    assert "[[type-" not in out
+    assert "[type](https://ncatlab.org/nlab/show/type)" in out
+
+
 def test_link_policy_no_published_candidate_goes_to_nlab():
     lookup = {
         "monad": [{"slug": "monad", "status": "queued", "chinese_translation": "单子",

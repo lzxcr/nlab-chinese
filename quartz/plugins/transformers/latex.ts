@@ -60,11 +60,19 @@ export const Latex: QuartzTransformerPlugin<Partial<Options>> = (opts) => {
       switch (engine) {
         case "katex":
           return {
-            css: [{ content: "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" }],
+            css: [
+              {
+                content: "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/katex.min.css",
+                integrity:
+                  "sha384-nH0MfJ44wi1dd7w6jinlyBgljjS8EJAh2JBoRad8a3VDw2K69vfaaqm4WnR+gXtA",
+              },
+            ],
             js: [
               {
                 // fix copy behaviour: https://github.com/KaTeX/KaTeX/blob/main/contrib/copy-tex/README.md
-                src: "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/copy-tex.min.js",
+                src: "https://cdn.jsdelivr.net/npm/katex@0.16.47/dist/contrib/copy-tex.min.js",
+                integrity:
+                  "sha384-Pe2JWbaShhSRT0SESJ9XLPeAsi4yrNi7r/CiH0Coq7giBjK5a6Ae7XcybE8rNlQP",
                 loadTime: "afterDOMReady",
                 contentType: "external",
               },

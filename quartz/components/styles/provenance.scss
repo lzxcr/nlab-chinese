@@ -1,0 +1,17 @@
+.provenance {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.8rem;
+  align-items: center;
+  margin: 0.4rem 0 1rem;
+  color: var(--darkgray);
+  font-size: 0.85rem;
+
+  .quality-badge {
+    padding: 0.12rem 0.45rem;
+    border: 1px solid var(--lightgray);
+    border-radius: 999px;
+    background: var(--highlight);
+    color: var(--dark);
+  }
+}

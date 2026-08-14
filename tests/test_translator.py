@@ -6,8 +6,10 @@ from nlab_pipeline.protector import Protector
 from nlab_pipeline.translator import (
     Cache,
     TranslationError,
+    _build_glossary_hints,
     _preprocess_headings,
     _split_chunks,
+    build_glossary_automaton,
     estimate_tokens,
     translate_document,
     validate_chunk_translation,
@@ -55,6 +57,13 @@ def test_split_chunks_respects_budget():
     assert len(chunks) >= 3
 
 
+def test_split_chunks_handles_unbroken_text_without_splitting_placeholders():
+    token = "@@PROT[123]@@"
+    chunks = _split_chunks("a" * 500 + token + "b" * 500, 30, 60)
+    assert all(estimate_tokens(chunk) <= 60 for chunk in chunks)
+    assert sum(chunk.count(token) for chunk in chunks) == 1
+
+
 def test_validate_chunk_passes_clean_roundtrip():
     protector = Protector()
     source = protector.protect("A [[category]] is $C$ and math $$x$$.")
@@ -74,6 +83,8 @@ def test_translate_document_roundtrips_with_fake():
     lookup = {}
     content = "## Definition\n\nA [[monad]] on $C$ is a functor $T: C \\to C$.\n\n$$F = G$$\n\nMore prose about [[filtered colimits]]."
     out = translate_document(client, content, "Test page", lookup, Cache())
+    assert out.startswith("## 定义")
+    assert "@@PROT[" not in out
     assert "中文" in out
     assert "[[monad" in out
     assert "$T: C \\to C$" in out
@@ -99,3 +110,18 @@ def test_chunk_cache_hit_skips_llm():
     second = translate_document(client, content, "T", {}, cache)
     assert first == second
     assert client.calls == calls  # cached, no new call
+
+
+def test_body_glossary_uses_external_seed_and_manual_override():
+    automaton = build_glossary_automaton(
+        {},
+        {"presheaf": [{"translation": "预层"}]},
+        {
+            "presheaf": [{"translation": "外部译名"}],
+            "fibration": [{"translation": "纤维化"}],
+        },
+    )
+    hints = _build_glossary_hints("A presheaf and a fibration.", automaton)
+    assert "presheaf -> 预层" in hints
+    assert "外部译名" not in hints
+    assert "fibration -> 纤维化" in hints

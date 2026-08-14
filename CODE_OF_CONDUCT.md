@@ -1,90 +1,49 @@
-# Citizen Code of Conduct
+# nLab-Chinese 社区行为准则
 
-## 1. Purpose
+## 我们的承诺
 
-A primary goal of the Quartz community is to be inclusive to the largest number of contributors, with the most varied and diverse backgrounds possible. As such, we are committed to providing a friendly, safe and welcoming environment for all, regardless of gender, sexual orientation, ability, ethnicity, socioeconomic status, and religion (or lack thereof).
+我们致力于为不同背景、经验、身份和能力的参与者提供友善、安全、尊重且无骚扰的
+协作环境。参与本项目意味着接受本准则。
 
-This code of conduct outlines our expectations for all those who participate in our community, as well as the consequences for unacceptable behavior.
+## 适用范围
 
-We invite all those who participate in the Quartz community to help us create safe and positive experiences for everyone.
+本准则适用于仓库、Issue、Pull Request、讨论区、线上或线下项目活动，以及代表项目
+进行的公开交流。维护者和其他具有决策权限的参与者同样受其约束。
 
-## 2. Open [Source/Culture/Tech] Citizenship
+## 期望行为
 
-A supplemental goal of this Code of Conduct is to increase open [source/culture/tech] citizenship by encouraging participants to recognize and strengthen the relationships between our actions and their effects on our community.
+- 尊重他人，善意理解不同的语言能力、知识背景和观点。
+- 围绕技术、翻译依据和可验证事实讨论，批评作品而非攻击个人。
+- 接受建设性反馈，承认错误并及时修正。
+- 保护他人的隐私，不公开未获授权的个人信息或私密沟通。
+- 对机器翻译、术语分歧和学术争议保持审慎，清楚区分事实、建议和个人判断。
+- 在发现不安全或排斥性行为时及时提醒维护者。
 
-Communities mirror the societies in which they exist and positive action is essential to counteract the many forms of inequality and abuses of power that exist in society.
+## 不可接受行为
 
-If you see someone who is making an extra effort to ensure our community is welcoming, friendly, and encourages all participants to contribute to the fullest extent, we want to know.
+- 基于身份、背景、能力或信仰的侮辱、歧视或贬低。
+- 性骚扰、不受欢迎的性暗示、暴力威胁、跟踪或持续恐吓。
+- 人身攻击、恶意挑衅、持续打断协作或组织围攻。
+- 未经同意公开他人的身份信息、联系方式、凭据或私密内容。
+- 利用项目渠道传播明显违法、有害或与项目无关的内容。
+- 对报告人、受影响者或参与调查者进行报复。
 
-## 3. Expected Behavior
+## 报告与处理
 
-The following behaviors are expected and requested of all community members:
+请通过 [SECURITY.md](SECURITY.md) 中的私密联系方式报告行为问题，并说明发生时间、
+渠道、相关内容和希望采取的保护措施。若私密渠道不可用，可提交不含个人或敏感细节的
+公开 Issue，请求维护者建立私密联系。
 
-- Participate in an authentic and active way. In doing so, you contribute to the health and longevity of this community.
-- Exercise consideration and respect in your speech and actions.
-- Attempt collaboration before conflict.
-- Refrain from demeaning, discriminatory, or harassing behavior and speech.
-- Be mindful of your surroundings and of your fellow participants. Alert community leaders if you notice a dangerous situation, someone in distress, or violations of this Code of Conduct, even if they seem inconsequential.
-- Remember that community event venues may be shared with members of the public; please be respectful to all patrons of these locations.
+维护者会尽量限制信息接触范围，避免利益冲突，并根据严重程度采取澄清、警告、内容
+移除、临时限制或永久移除项目参与权限等措施。紧急人身安全问题应优先联系所在地的
+紧急服务或可信赖支持机构。
 
-## 4. Unacceptable Behavior
+被举报人可以通过同一私密渠道提出申诉。申诉应由未直接参与原决定的维护者复核；
+若项目规模无法满足这一条件，会明确说明限制。
 
-The following behaviors are considered harassment and are unacceptable within our community:
+## 归属
 
-- Violence, threats of violence or violent language directed against another person.
-- Sexist, racist, homophobic, transphobic, ableist or otherwise discriminatory jokes and language.
-- Posting or displaying sexually explicit or violent material.
-- Posting or threatening to post other people's personally identifying information ("doxing").
-- Personal insults, particularly those related to gender, sexual orientation, race, religion, or disability.
-- Inappropriate photography or recording.
-- Inappropriate physical contact. You should have someone's consent before touching them.
-- Unwelcome sexual attention. This includes, sexualized comments or jokes; inappropriate touching, groping, and unwelcomed sexual advances.
-- Deliberate intimidation, stalking or following (online or in person).
-- Advocating for, or encouraging, any of the above behavior.
-- Sustained disruption of community events, including talks and presentations.
-
-## 5. Weapons Policy
-
-No weapons will be allowed at Quartz community events, community spaces, or in other spaces covered by the scope of this Code of Conduct. Weapons include but are not limited to guns, explosives (including fireworks), and large knives such as those used for hunting or display, as well as any other item used for the purpose of causing injury or harm to others. Anyone seen in possession of one of these items will be asked to leave immediately, and will only be allowed to return without the weapon. Community members are further expected to comply with all state and local laws on this matter.
-
-## 6. Consequences of Unacceptable Behavior
-
-Unacceptable behavior from any community member, including sponsors and those with decision-making authority, will not be tolerated.
-
-Anyone asked to stop unacceptable behavior is expected to comply immediately.
-
-If a community member engages in unacceptable behavior, the community organizers may take any action they deem appropriate, up to and including a temporary ban or permanent expulsion from the community without warning (and without refund in the case of a paid event).
-
-## 7. Reporting Guidelines
-
-If you are subject to or witness unacceptable behavior, or have any other concerns, please notify a community organizer as soon as possible. j.zhao2k19@gmail.com.
-
-Additionally, community organizers are available to help community members engage with local law enforcement or to otherwise help those experiencing unacceptable behavior feel safe. In the context of in-person events, organizers will also provide escorts as desired by the person experiencing distress.
-
-## 8. Addressing Grievances
-
-If you feel you have been falsely or unfairly accused of violating this Code of Conduct, you should notify @jackyzha0 with a concise description of your grievance. Your grievance will be handled in accordance with our existing governing policies.
-
-## 9. Scope
-
-We expect all community participants (contributors, paid or otherwise; sponsors; and other guests) to abide by this Code of Conduct in all community venues--online and in-person--as well as in all one-on-one communications pertaining to community business.
-
-This code of conduct and its related procedures also applies to unacceptable behavior occurring outside the scope of community activities when such behavior has the potential to adversely affect the safety and well-being of community members.
-
-## 10. Contact info
-
-j.zhao2k19@gmail.com
-
-## 11. License and attribution
-
-The Citizen Code of Conduct is distributed by [Stumptown Syndicate](http://stumptownsyndicate.org) under a [Creative Commons Attribution-ShareAlike license](http://creativecommons.org/licenses/by-sa/3.0/).
-
-Portions of text derived from the [Django Code of Conduct](https://www.djangoproject.com/conduct/) and the [Geek Feminism Anti-Harassment Policy](http://geekfeminism.wikia.com/wiki/Conference_anti-harassment/Policy).
-
-_Revision 2.3. Posted 6 March 2017._
-
-_Revision 2.2. Posted 4 February 2016._
-
-_Revision 2.1. Posted 23 June 2014._
-
-_Revision 2.0, adopted by the [Stumptown Syndicate](http://stumptownsyndicate.org) board on 10 January 2013. Posted 17 March 2013._
+本准则参考并改写自
+[Citizen Code of Conduct](https://citizencodeofconduct.org/)，该来源采用
+[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/)；本文件依相同许可
+提供。仓库的软件 MIT 许可不改变本文件的 CC BY-SA 许可。

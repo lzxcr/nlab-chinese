@@ -12,11 +12,12 @@ untranslated English fallback).
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import threading
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .aho import AhoCorasick
 from .cleaner import normalize_headings
@@ -81,6 +82,7 @@ _HEADING = re.compile(r"^(#{1,6})[ \t]*([^#\n][^\n]*?)[ \t]*$")
 _CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]{3,}")
 _TRUNCATION_ENDINGS = (",", ";", ":", "-", "–", "—", "…", "(", "（", "[", "and", "or", "of", "the")
+_MAX_GLOSSARY_HINTS = 40
 
 
 class TranslationError(RuntimeError):
@@ -92,26 +94,32 @@ class Cache:
     """Dict-like chunk cache (backed by the state store in production)."""
 
     backend: object | None = None
-    memory: dict = None  # type: ignore[assignment]
-
-    def __post_init__(self) -> None:
-        if self.memory is None:
-            self.memory = {}
+    memory: dict[str, str] = field(default_factory=dict)
+    _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     def get(self, key: str) -> str | None:
-        if key in self.memory:
-            return self.memory[key]
+        with self._lock:
+            if key in self.memory:
+                return self.memory[key]
         if self.backend is not None:
             value = self.backend.cache_get(key)
             if value is not None:
-                self.memory[key] = value
+                with self._lock:
+                    self.memory[key] = value
                 return value
         return None
 
     def put(self, key: str, value: str) -> None:
-        self.memory[key] = value
+        with self._lock:
+            self.memory[key] = value
         if self.backend is not None:
             self.backend.cache_put(key, value, settings.llm_model)
+
+    def discard(self, key: str) -> None:
+        with self._lock:
+            self.memory.pop(key, None)
+        if self.backend is not None:
+            self.backend.cache_delete(key)
 
 
 def estimate_tokens(text: str) -> int:
@@ -121,7 +129,7 @@ def estimate_tokens(text: str) -> int:
 
 def _cjk_ratio(text: str) -> float:
     cjk = len(_CJK.findall(text))
-    total = len(re.findall(r"\w", text)) + cjk
+    total = len(re.findall(r"[A-Za-z0-9_\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", text))
     return cjk / max(1, total)
 
 
@@ -139,13 +147,15 @@ def _preprocess_headings(content: str, protector: Protector) -> str:
     return "\n".join(out)
 
 
-def _build_glossary_hints(
-    chunk: str, automaton: AhoCorasick, non_trans_automaton: AhoCorasick
-) -> str:
+def _build_glossary_hints(chunk: str, automaton: AhoCorasick) -> str:
     """Collect glossary hints by scanning the chunk once with Aho-Corasick."""
     hints: set[str] = set()
     seen: set[tuple[int, int, str]] = set()
     for start, end, payload in automaton.scan(chunk):
+        if start > 0 and chunk[start - 1].isalnum() and chunk[start].isalnum():
+            continue
+        if end < len(chunk) and chunk[end - 1].isalnum() and chunk[end].isalnum():
+            continue
         cn = payload
         key = (start, end, cn)
         if key not in seen:
@@ -153,17 +163,10 @@ def _build_glossary_hints(
             hints.add(f"- {chunk[start:end]} -> {cn}")
     if not hints:
         return ""
-    return "\n[学术术语对齐基准字典]:\n" + "\n".join(sorted(hints)) + "\n"
-
-
-def _build_non_trans_prompt(chunk: str, non_trans_automaton: AhoCorasick) -> str:
-    matched: set[str] = set()
-    for start, end, _payload in non_trans_automaton.scan(chunk):
-        matched.add(chunk[start:end])
-    if not matched:
-        return ""
-    joined = ", ".join(f"'{t}'" for t in sorted(matched))
-    return "\n[DO NOT TRANSLATE THE FOLLOWING TERMS - KEEP RAW English]:\n" + joined + "\n"
+    selected = sorted(hints, key=lambda hint: (-len(hint.split(" -> ", 1)[0]), hint))[
+        :_MAX_GLOSSARY_HINTS
+    ]
+    return "\n[学术术语对齐基准字典]:\n" + "\n".join(selected) + "\n"
 
 
 def _split_chunks(tokenized: str, target_tokens: int, max_tokens: int) -> list[str]:
@@ -191,20 +194,43 @@ def _split_chunks(tokenized: str, target_tokens: int, max_tokens: int) -> list[s
         if buf:
             out.append(" ".join(buf))
         # Hard fallback: paragraphs without sentence punctuation still must
-        # respect the budget, so split the oversized remainders at words.
+        # respect the budget. Protection tokens are indivisible atoms.
         final: list[str] = []
         for piece in out:
-            while estimate_tokens(piece) > budget:
-                words = piece.split(" ")
-                cut = max(1, int(len(words) * budget / estimate_tokens(piece)))
-                final.append(" ".join(words[:cut]))
-                piece = " ".join(words[cut:])
-            final.append(piece)
+            if estimate_tokens(piece) <= budget:
+                final.append(piece)
+                continue
+            character_budget = budget * 2 + 1
+            current_piece = ""
+            atoms = re.split(r"(@@PROT\[\d+\]@@)", piece)
+            for atom in atoms:
+                if not atom:
+                    continue
+                if _TOKEN_SUB.fullmatch(atom):
+                    if current_piece and len(current_piece) + len(atom) > character_budget:
+                        final.append(current_piece)
+                        current_piece = ""
+                    current_piece += atom
+                    continue
+                remainder = atom
+                while remainder:
+                    available = character_budget - len(current_piece)
+                    if available <= 0:
+                        final.append(current_piece)
+                        current_piece = ""
+                        available = character_budget
+                    current_piece += remainder[:available]
+                    remainder = remainder[available:]
+                    if len(current_piece) >= character_budget:
+                        final.append(current_piece)
+                        current_piece = ""
+            if current_piece:
+                final.append(current_piece)
         return [p for p in final if p.strip()]
 
     for paragraph in paragraphs:
         paragraph_tokens = estimate_tokens(paragraph)
-        if current and current_tokens + paragraph_tokens > max_tokens:
+        if current and current_tokens + paragraph_tokens > target_tokens:
             chunks.append("\n\n".join(current))
             current, current_tokens = [], 0
         if paragraph_tokens <= max_tokens:
@@ -222,7 +248,18 @@ def _split_chunks(tokenized: str, target_tokens: int, max_tokens: int) -> list[s
 
 
 def _chunk_cache_key(tokenized: str, glossary_hash: str) -> str:
-    raw = "|".join([PROMPT_VERSION, settings.llm_model, glossary_hash, tokenized])
+    effective_config = {
+        "prompt_version": PROMPT_VERSION,
+        "backend": settings.llm_backend,
+        "model": settings.llm_model,
+        "temperature": settings.temperature,
+        "top_p": settings.top_p,
+        "max_tokens": settings.max_tokens,
+        "validation_ratio": settings.validate_min_cjk_ratio,
+        "glossary": glossary_hash,
+        "source": tokenized,
+    }
+    raw = json.dumps(effective_config, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -255,7 +292,6 @@ def _translate_chunk(
     chunk: str,
     title: str,
     automaton: AhoCorasick,
-    non_trans_automaton: AhoCorasick,
     protector: Protector,
     glossary_hash: str,
     cache: Cache,
@@ -270,11 +306,14 @@ def _translate_chunk(
     key = _chunk_cache_key(chunk, glossary_hash)
     cached = cache.get(key)
     if cached is not None:
-        return cached
+        errors = validate_chunk_translation(chunk, cached, protector)
+        if not errors:
+            return cached
+        logger.warning("[%s] 丢弃未通过当前规则的缓存分块: %s", title, "; ".join(errors))
+        cache.discard(key)
 
     user = (
-        _build_glossary_hints(chunk, automaton, non_trans_automaton)
-        + _build_non_trans_prompt(chunk, non_trans_automaton)
+        _build_glossary_hints(chunk, automaton)
         + "\n<source_text>\n"
         + chunk
         + "\n</source_text>"
@@ -301,22 +340,41 @@ def _translate_chunk(
     raise TranslationError(f"分块翻译失败: {last_error}")
 
 
-def build_glossary_automaton(lookup: Mapping[str, Sequence[dict]]) -> AhoCorasick:
-    """Aho-Corasick over alias -> Chinese translation pairs."""
+def build_glossary_automaton(
+    lookup: Mapping[str, Sequence[dict]],
+    local_dictionary: Mapping[str, object] | None = None,
+    external_dictionary: Mapping[str, object] | None = None,
+) -> AhoCorasick:
+    """Aho-Corasick over body terms, with local entries taking priority."""
+    translations: dict[str, str] = {}
+
+    def _dictionary_translation(record: object) -> str:
+        items = record if isinstance(record, list) else [record]
+        return next(
+            (
+                str(item["translation"])
+                for item in items
+                if isinstance(item, dict) and item.get("translation")
+            ),
+            "",
+        )
+
+    # Lowest to highest priority: external seed, audited page titles, manual
+    # dictionary. This also ensures one pattern produces only one hint.
+    for term, record in (external_dictionary or {}).items():
+        if translated := _dictionary_translation(record):
+            translations[term.lower()] = translated
     automaton = AhoCorasick()
     for alias_lower, candidates in lookup.items():
         cn = next((c.get("chinese_translation") for c in candidates if c.get("chinese_translation")), "")
-        if cn and len(alias_lower) > 3:
-            automaton.add(alias_lower, cn)
-    automaton.build()
-    return automaton
-
-
-def build_non_trans_automaton(non_trans: set[str]) -> AhoCorasick:
-    automaton = AhoCorasick()
-    for term in non_trans:
-        if len(term) > 2:
-            automaton.add(term, None)
+        if cn:
+            translations[alias_lower.lower()] = cn
+    for term, record in (local_dictionary or {}).items():
+        if translated := _dictionary_translation(record):
+            translations[term.lower()] = translated
+    for term, translated in translations.items():
+        if len(term) > 3:
+            automaton.add(term, translated)
     automaton.build()
     return automaton
 
@@ -340,15 +398,19 @@ def translate_document(
         from .dictionary import dictionary_fingerprint
         glossary_hash = dictionary_fingerprint()
 
-    _local, _ext, non_trans = load_merged_dictionaries()
+    local_dictionary, external_dictionary, non_trans = load_merged_dictionaries()
     content = normalize_headings(content)
     protector = Protector()
-    content = _preprocess_headings(content, protector)
+    # Protect source syntax before injecting deterministic heading tokens.
+    # Calling protect() after protect_exact() would mistake those generated
+    # tokens for literal source text and leave a placeholder in the output.
     tokenized = protector.protect(content)
+    tokenized = _preprocess_headings(tokenized, protector)
+    # Proper nouns are deterministic structure, not merely a prompt request.
+    tokenized = protector.protect_terms(tokenized, non_trans)
     chunks = _split_chunks(tokenized, settings.chunk_target_tokens, settings.chunk_max_tokens)
 
-    automaton = build_glossary_automaton(lookup)
-    non_trans_automaton = build_non_trans_automaton(non_trans)
+    automaton = build_glossary_automaton(lookup, local_dictionary, external_dictionary)
 
     results: list[str | None] = [None] * len(chunks)
     pending = [(i, chunk) for i, chunk in enumerate(chunks) if _TOKEN_SUB.sub("", chunk).strip()]
@@ -364,7 +426,7 @@ def translate_document(
                 thread_local.client = client
         results[index] = _translate_chunk(
             thread_local.client, chunk, title,
-            automaton, non_trans_automaton, protector, glossary_hash, cache,
+            automaton, protector, glossary_hash, cache,
         )
 
     # Pre-fill pure-placeholder chunks (no LLM call needed).
@@ -375,10 +437,18 @@ def translate_document(
     if len(pending) == 1:
         _worker(*pending[0])
     elif pending:
-        with ThreadPoolExecutor(max_workers=settings.max_workers) as executor:
-            futures = {executor.submit(_worker, i, c): i for i, c in pending}
+        executor = ThreadPoolExecutor(max_workers=settings.max_workers)
+        futures = {executor.submit(_worker, i, c): i for i, c in pending}
+        try:
             for future in as_completed(futures):
                 future.result()  # re-raises worker exceptions
+        except BaseException:
+            for future in futures:
+                future.cancel()
+            executor.shutdown(wait=True, cancel_futures=True)
+            raise
+        else:
+            executor.shutdown(wait=True)
 
     joined = "\n\n".join(r for r in results if r is not None)
     return protector.restore(joined)

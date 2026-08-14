@@ -5,8 +5,8 @@ A "dictionary" is a JSON map from lower-cased English term to a list of
 pos == "propn" (proper nouns) are automatically promoted to a hard
 non-translation whitelist so the LLM never transliterates people's names.
 
-The dictionary file is created lazily; the bundled external glossary provides
-seed translations for common mathematical vocabulary.
+The dictionary file is created lazily. An optional local external glossary can
+provide seed translations when its operator has permission to use the data.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .config import logger, settings
+from .config import settings
 
 # Canonical part-of-speech tags accepted by the dictionary.
 VALID_POS_TAGS: dict[str, str] = {
@@ -39,9 +39,14 @@ POS_SHORTCUTS: dict[str, str] = {
 }
 
 
+class DictionaryError(RuntimeError):
+    """Raised when glossary input cannot be trusted or parsed safely."""
+
+
 def atomic_save_json(file_path: str | Path, data: Any) -> None:
     """Atomically write *data* as JSON (write-then-rename with fsync)."""
     file_path = Path(file_path)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = file_path.with_suffix(file_path.suffix + ".tmp")
     try:
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -60,8 +65,7 @@ def _read_json(path: Path, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("failed to load %s: %s", path, exc)
-        return default
+        raise DictionaryError(f"词典文件无法解析，已停止以避免降级或覆盖: {path} ({exc})") from exc
 
 
 def load_merged_dictionaries() -> tuple[dict, dict, set]:
@@ -71,7 +75,10 @@ def load_merged_dictionaries() -> tuple[dict, dict, set]:
     translations.  Every local entry tagged propn is added to the returned
     non-translatable set (the hard block-list for the LLM).
     """
-    local_dict: dict = _read_json(settings.dictionary_file, {})
+    local_dict = _read_json(settings.dictionary_file, {})
+    ext_dict = _read_json(settings.external_glossary_file, {})
+    if not isinstance(local_dict, dict) or not isinstance(ext_dict, dict):
+        raise DictionaryError("人工词典与外部术语表的 JSON 根节点必须是对象")
     non_trans: set[str] = set()
 
     for term_lower, items in local_dict.items():
@@ -80,7 +87,18 @@ def load_merged_dictionaries() -> tuple[dict, dict, set]:
         ):
             non_trans.add(term_lower)
 
-    ext_dict: dict = _read_json(settings.external_glossary_file, {})
+    extra = _read_json(settings.non_translatable_file, [])
+    if isinstance(extra, dict):
+        configured_terms = extra.get("terms", list(extra))
+    elif isinstance(extra, list):
+        configured_terms = extra
+    else:
+        raise DictionaryError("NON_TRANSLATABLE_FILE 必须是字符串数组或对象")
+    if not isinstance(configured_terms, list) or not all(
+        isinstance(term, str) for term in configured_terms
+    ):
+        raise DictionaryError("NON_TRANSLATABLE_FILE 的 terms 必须是字符串数组")
+    non_trans.update(term.lower().strip() for term in configured_terms if term.strip())
     return local_dict, ext_dict, non_trans
 
 
@@ -121,6 +139,8 @@ def parse_smart_input(raw: str, default_title: str) -> dict | None:
             pos = POS_SHORTCUTS[prefix]
             if pos == "propn" and not body:
                 body = default_title.strip()
+            if not body:
+                return None
             return {"pos": pos, "translation": body}
 
     if clean.lower() in ("专有名词", "p", "propn"):

@@ -19,14 +19,12 @@ fi
 NLAB_REPO="${NLAB_REPO:-https://github.com/ncatlab/nlab-content.git}"
 NLAB_DIR="${NLAB_DIR:-$SCRIPT_DIR/nlab-content}"
 
-# Local GGUF model served by llama.cpp (see serve).
-# gemma-4-12b-it is the recommended translator (direct, high-quality output).
-# deepseek-v4-pro produces better terminology but needs LLM_MAX_TOKENS>=4096
-# and LLM_TIMEOUT>=600, and cannot use --reasoning-budget 0 (empty output).
-LLM_MODEL_PATH="${LLM_MODEL_PATH:-$HOME/Models/gemma-4-12B-it-qat-GGUF/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf}"
+# Local GGUF model served by llama.cpp (see serve). The default is only a
+# conventional repository-local path; choose and configure the actual model.
+LLM_MODEL_PATH="${LLM_MODEL_PATH:-$SCRIPT_DIR/models/gemma-4-12b-it.gguf}"
 LLM_PORT="${LLM_PORT:-8080}"
-# Context window: 4096 fits both bundled models on an 8 GiB GPU; raise it
-# (and/or enable quantised KV cache) only if your VRAM allows.
+# Conservative local context default; adjust it for the selected model and
+# available memory.
 LLM_CTX="${LLM_CTX:-4096}"
 # GPU layers to offload (99 = all). Set to 0 to force CPU-only.
 LLM_NGL="${LLM_NGL:-99}"
@@ -34,10 +32,9 @@ LLM_NGL="${LLM_NGL:-99}"
 # Logs written by src/nlab_pipeline/config.py.
 LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
 
-# Remote that receives the built site on the gh-pages branch.  The default
-# points at the project's own repository; set DEPLOY_REMOTE in .env when the
-# pipeline repo is a fork of upstream quartz (whose origin you cannot push to).
-DEPLOY_REMOTE="${DEPLOY_REMOTE:-origin}"
+# Remote that receives the built site on the gh-pages branch.  It is deliberately
+# opt-in: an implicit `origin` is too easy to aim at the wrong repository.
+DEPLOY_REMOTE="${DEPLOY_REMOTE:-}"
 
 c_blue=$'\033[1;34m'; c_green=$'\033[1;32m'; c_yellow=$'\033[1;33m'; c_red=$'\033[1;31m'; c_off=$'\033[0m'
 info() { echo -e "${c_blue}[INFO]${c_off} $1"; }
@@ -58,7 +55,8 @@ sync_repo() {
   else
     local before after
     before="$(git -C "$NLAB_DIR" rev-parse HEAD)"
-    git -C "$NLAB_DIR" pull --ff-only origin master
+    # The clone tracks the upstream default branch; do not assume its name.
+    git -C "$NLAB_DIR" pull --ff-only
     after="$(git -C "$NLAB_DIR" rev-parse HEAD)"
     if [[ "$before" != "$after" ]]; then
       ok "检测到远端有学术条目更新！更新摘要如下："
@@ -70,15 +68,22 @@ sync_repo() {
 }
 
 serve() {
+  command -v llama-server >/dev/null 2>&1 || {
+    fail "未找到 llama-server；请先安装 llama.cpp 并将其加入 PATH。"
+    return 1
+  }
+  [[ -f "$LLM_MODEL_PATH" ]] || {
+    fail "模型文件不存在: $LLM_MODEL_PATH（请在 .env 中设置 LLM_MODEL_PATH）。"
+    return 1
+  }
   info "启动 llama.cpp 推理服务（模型: $LLM_MODEL_PATH, GPU 层: $LLM_NGL）..."
   local extra=()
-  # Case-insensitive model detection: DeepSeek reasoning models produce
-  # empty output with --reasoning-budget 0.
+  # Preserve reasoning for DeepSeek-family files; direct-output models use a
+  # zero reasoning budget to avoid returning an analysis without a translation.
   if [[ "${LLM_MODEL_PATH,,}" != *deepseek* ]]; then
     extra+=(--reasoning-budget 0)
   fi
-  # Quantised KV cache (documented default): q8_0 halves KV memory on 8 GiB
-  # GPUs at negligible quality cost.
+  # Quantised KV cache keeps the conservative local preset memory-efficient.
   extra+=(--cache-type-k q8_0 --cache-type-v q8_0)
   exec llama-server -m "$LLM_MODEL_PATH" --host 127.0.0.1 --port "$LLM_PORT" \
     -c "$LLM_CTX" -ngl "$LLM_NGL" "${extra[@]}"
@@ -97,14 +102,18 @@ deploy() {
     return 1
   fi
   info "进入自动部署流程..."
-  build
-  local public_dir="$SCRIPT_DIR/public"
-  [[ -d "$public_dir" ]] || { fail "静态编译输出目录不存在，终止部署。"; return 1; }
+  [[ -n "$DEPLOY_REMOTE" ]] || {
+    fail "未配置 DEPLOY_REMOTE；请在 .env 中显式指定你有权推送的远程名。"
+    return 1
+  }
   local remote_url
   remote_url="$(git -C "$SCRIPT_DIR" remote get-url "$DEPLOY_REMOTE" 2>/dev/null)" || {
     fail "未找到远程仓库 [$DEPLOY_REMOTE]，请先添加（或设置 DEPLOY_REMOTE）。"
     return 1
   }
+  build
+  local public_dir="$SCRIPT_DIR/public"
+  [[ -d "$public_dir" ]] || { fail "静态编译输出目录不存在，终止部署。"; return 1; }
   # Safety: pushing a freshly-built site overwrites the gh-pages branch on the
   # remote.  Force-push only when explicitly requested.
   if [[ -z "$force_push" ]]; then
@@ -115,12 +124,22 @@ deploy() {
   (
     cd "$public_dir"
     git init -q
+    git config user.name "nLab-Chinese deploy"
+    git config user.email "noreply@nlab-chinese.invalid"
     git add -A
     git commit -q -m "Automated Deploy via manage.sh: $(date '+%Y-%m-%d %H:%M:%S')" || true
     if [[ -n "$force_push" ]]; then
-      git push -f "$remote_url" master:gh-pages
+      local remote_head=""
+      if git ls-remote --exit-code "$remote_url" refs/heads/gh-pages >/dev/null 2>&1; then
+        git fetch -q "$remote_url" refs/heads/gh-pages
+        remote_head="$(git rev-parse FETCH_HEAD)"
+        git push --force-with-lease="refs/heads/gh-pages:$remote_head" \
+          "$remote_url" HEAD:gh-pages
+      else
+        git push "$remote_url" HEAD:gh-pages
+      fi
     else
-      git push "$remote_url" master:gh-pages
+      git push "$remote_url" HEAD:gh-pages
     fi
   )
   ok "🎉 自动部署成功！"
@@ -157,7 +176,7 @@ usage() {
 
 case "${1:-}" in
   sync-repo)     sync_repo ;;
-  scan|scan-repo) $PYTHON "$CLI" scan ;;
+  scan|scan-repo) $PYTHON "$CLI" scan "${@:2}" ;;
   audit|audit-dict) $PYTHON "$CLI" audit ;;
   tree|tree-report) $PYTHON "$CLI" tree ;;
   status)        $PYTHON "$CLI" status ;;
@@ -167,5 +186,6 @@ case "${1:-}" in
   deploy)        deploy "${2:-}" ;;
   view-log)      view_log ;;
   error-report)  error_report ;;
-  *)             usage ;;
+  ""|-h|--help)  usage ;;
+  *)             usage; exit 2 ;;
 esac

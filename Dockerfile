@@ -13,21 +13,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
 COPY . .
-RUN pnpm quartz build
+ARG NLAB_SITE_URL=nlab-chinese.github.io
+ARG NLAB_REPOSITORY_URL=""
+RUN NLAB_SITE_URL="$NLAB_SITE_URL" NLAB_REPOSITORY_URL="$NLAB_REPOSITORY_URL" \
+    NLAB_OG_IMAGES=0 pnpm quartz build
 
-FROM node:22-slim AS runner
-WORKDIR /usr/src/app
-ENV NODE_ENV=production
-
-COPY --from=builder /usr/src/app/public ./public
-COPY --from=builder /usr/src/app/node_modules ./node_modules
-COPY --from=builder /usr/src/app/package.json ./package.json
-# Minimal static file server using the already-installed serve-handler.
-COPY server.mjs ./server.mjs
-
-# Never run as root.
-RUN useradd --create-home --uid 10001 nlabuser
-USER nlabuser
+FROM nginxinc/nginx-unprivileged:1.28-alpine AS runner
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=builder /usr/src/app/public /usr/share/nginx/html
 
 EXPOSE 8080
-CMD ["node", "server.mjs"]

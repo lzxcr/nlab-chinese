@@ -1,6 +1,8 @@
 """State store: collisions, transitions, ambiguity, migration, corruption."""
 
 import json
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -34,6 +36,14 @@ def test_upsert_and_get(store):
     page = store.get_page("pages/1")
     assert page["true_title"] == "Test page"
     assert page["slug"] == "Test-page"
+
+
+def test_bulk_upsert_fills_optional_schema_fields(store):
+    store.upsert_pages([_page("pages/1", "Test page")])
+    page = store.get_page("pages/1")
+    assert page["source_revision"] == ""
+    assert page["translator_model"] == ""
+    assert page["prompt_version"] == ""
 
 
 def test_slug_uniqueness_is_enforced(store):
@@ -120,6 +130,31 @@ def test_legacy_import_recomputes_colliding_slugs(tmp_path):
     store.close()
 
 
+def test_schema_v2_export_imports_into_current_database(tmp_path):
+    legacy = tmp_path / "legacy-v2.json"
+    page = _page("pages/1", "Test page")
+    page["category"] = {
+        "primary": page.pop("category_primary"),
+        "secondary": page.pop("category_secondary"),
+    }
+    page["source_md5_or_sha"] = page.pop("source_md5")
+    page["translated_at"] = "2026-01-02T00:00:00Z"
+    page["published_at"] = "2026-01-03T00:00:00Z"
+    legacy.write_text(
+        json.dumps({"schema_version": 2, "pages": {"pages/1": page}}),
+        encoding="utf-8",
+    )
+    migrated = StateStore(tmp_path / "migrated.db")
+    migrated.init_schema()
+    assert migrated.import_legacy_json(legacy) == (1, 0)
+    imported = migrated.get_page("pages/1")
+    assert imported["true_title"] == "Test page"
+    assert imported["source_size"] == 10
+    assert imported["fetched_at"] == "2026-01-01T00:00:00Z"
+    assert imported["published_at"] == "2026-01-03T00:00:00Z"
+    migrated.close()
+
+
 def test_corrupt_legacy_json_aborts(tmp_path):
     legacy = tmp_path / "legacy.json"
     legacy.write_text("{broken json", encoding="utf-8")
@@ -130,7 +165,52 @@ def test_corrupt_legacy_json_aborts(tmp_path):
     store.close()
 
 
-def test_export_json_v2_shape(store, tmp_path):
+def test_non_object_legacy_json_aborts(tmp_path):
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text("[]", encoding="utf-8")
+    store = StateStore(tmp_path / "state.db")
+    store.init_schema()
+    with pytest.raises(StateCorruptError, match="根节点"):
+        store.import_legacy_json(legacy)
+    store.close()
+
+
+def test_legacy_import_refuses_to_overwrite_nonempty_database(tmp_path):
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text("{}", encoding="utf-8")
+    store = StateStore(tmp_path / "state.db")
+    store.init_schema()
+    store.upsert_page(_page("pages/1", "Existing"))
+    with pytest.raises(StateError, match="非空"):
+        store.import_legacy_json(legacy)
+    assert store.get_page("pages/1")["true_title"] == "Existing"
+    store.close()
+
+
+def test_invalid_sqlite_file_has_domain_error(tmp_path):
+    database = tmp_path / "broken.db"
+    database.write_text("not sqlite", encoding="utf-8")
+    with pytest.raises(StateCorruptError, match="无法打开"):
+        StateStore(database)
+
+
+def test_future_sqlite_schema_is_rejected(tmp_path):
+    database = tmp_path / "future.db"
+    store = StateStore(database)
+    store.init_schema()
+    store.close()
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "UPDATE meta SET value = ? WHERE key = 'schema_version'",
+            (str(SCHEMA_VERSION + 1),),
+        )
+    reopened = StateStore(database)
+    with pytest.raises(StateError, match="高于程序支持"):
+        reopened.init_schema()
+    reopened.close()
+
+
+def test_export_json_current_shape(store, tmp_path):
     store.upsert_page(_page("pages/1", "Test page", aliases=["Test page"]))
     store.set_aliases("pages/1", ["Test page", "alias"])
     out = tmp_path / "export.json"
@@ -149,3 +229,27 @@ def test_chunk_cache_roundtrip(store):
     assert store.cache_get("k") == "译文"
     assert store.cache_prune() == 1
     assert store.cache_get("k") is None
+
+
+def test_chunk_cache_connection_is_safe_across_workers(store):
+    def write_and_read(index: int) -> str | None:
+        key = f"key-{index}"
+        store.cache_put(key, f"译文-{index}", "model")
+        return store.cache_get(key)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(write_and_read, range(100)))
+    assert results == [f"译文-{index}" for index in range(100)]
+
+
+def test_exclusive_operation_rejects_concurrent_writer(tmp_path):
+    first = StateStore(tmp_path / "state.db")
+    second = StateStore(tmp_path / "state.db")
+    first.init_schema()
+    second.init_schema()
+    with first.exclusive_operation("first"):
+        with pytest.raises(StateError, match="并发"):
+            with second.exclusive_operation("second"):
+                pass
+    first.close()
+    second.close()

@@ -1,17 +1,34 @@
-# 内容归属与来源（ATTRIBUTION）
+# 内容归属与来源
 
-本站点中 nLab 原文内容与机器译文的归属说明，见站点内页面
-[/ATTRIBUTION](/ATTRIBUTION)（源文件 `content/ATTRIBUTION.md`）。
+本文件说明仓库和生成站点中的第三方内容边界。站点内展示版本见
+[content/ATTRIBUTION.md](content/ATTRIBUTION.md)。
 
-摘要：
+## nLab 内容
 
-- nLab 原文：© nLab 及其贡献者（https://ncatlab.org/nlab/show/HomePage）。
-  nLab 允许并鼓励注明来源的使用与分发；本项目以逐页 frontmatter 记录
-  源页面（`nlab.source_url`）、源页面稳定 ID（`nlab.page_id`）、抓取时间
-  （`nlab.fetched_at`）、翻译时间与模型（`nlab.translator`）。
-- 术语种子词典：香蕉空间（https://www.bananaspace.org）Translist。
-- 机器译文：由本地大模型生成，未经人工校对，仅供参考。
-- 站点生成器：Quartz v4（MIT License, Jacky Zhao）。
+页面原文来自 [nLab](https://ncatlab.org/nlab/show/HomePage) 及其贡献者。nLab 当前
+说明：遵循通常学术惯例并注明来源时，使用和分发内容是自由且受鼓励的；社区尚未就
+更正式的统一许可证声明形成共识。若相关个人贡献者另有说明，也应一并遵守。
 
-正式发布前请与 nLab 社区确认系统性翻译镜像的归属写法，并核对香蕉空间
-术语表与所用模型的再分发/产出条款。
+每个通过发布门禁的译文页面记录：
+
+- `nlab.page_id`、`nlab.source_url`
+- `nlab.source_revision`、`nlab.source_content_md5`
+- `nlab.fetched_at`、`nlab.translated_at`
+- `nlab.translator.model`、`nlab.translator.prompt_version`
+- `nlab.quality_status` 与内容使用说明
+
+机器译文默认未经人工校对，不能替代英文原文或正式学术来源。
+
+## 外部术语数据
+
+项目曾使用香蕉空间（Banana Space）的 Translist 词条作为术语种子，但未找到允许
+再分发该数据集的明确公开许可。因此仓库不提交该词典；运营者只能通过
+`EXTERNAL_GLOSSARY_FILE` 在本地提供其有权使用的数据。
+
+## 软件
+
+项目代码采用 [MIT License](LICENSE.txt)。`quartz/` 基于 Jacky Zhao 的 Quartz v4，
+保留其 MIT 版权声明和 [许可证副本](quartz/LICENSE.txt)。依赖包继续适用各自许可。
+
+公开部署或再分发内容前，应重新核对 nLab 的最新使用说明、相关贡献者要求和任何本地
+外部词典的许可。
