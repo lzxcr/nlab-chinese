@@ -191,6 +191,19 @@ class StateStore:
     # ------------------------------------------------------------------ #
     # Legacy migration
     # ------------------------------------------------------------------ #
+    def get_meta(self, key: str) -> str | None:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM meta WHERE key = ?", (key,)
+            ).fetchone()
+            return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        with self._lock, self.conn:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", (key, value)
+            )
+
     def has_pages(self) -> bool:
         with self._lock:
             return self.conn.execute("SELECT 1 FROM pages LIMIT 1").fetchone() is not None

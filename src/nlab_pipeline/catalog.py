@@ -94,6 +94,19 @@ def scan_and_sync_catalog(store: StateStore, *, force: bool = False) -> int:
     if not pages_dir.is_dir():
         raise RuntimeError(f"未找到 nLab 物理源路径: {pages_dir}")
 
+    # Record the upstream revision this snapshot was scanned from (shallow
+    # clone: HEAD is the only commit, but it is still the exact provenance).
+    try:
+        import subprocess
+
+        revision = subprocess.run(
+            ["git", "-C", str(settings.nlab_dir), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=10, check=True,
+        ).stdout.strip()
+        store.set_meta("source_revision", revision)
+    except (OSError, subprocess.SubprocessError) as exc:
+        logger.warning("无法读取上游 git 版本: %s", exc)
+
     slug_seen: dict[str, str] = {}
     for page in store.get_pages():
         if page["slug"]:

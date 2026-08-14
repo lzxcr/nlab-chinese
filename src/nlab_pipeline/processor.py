@@ -50,6 +50,7 @@ def build_frontmatter(page: dict) -> str:
     front["nlab"] = {
         "page_id": page["page_id"],
         "source_url": settings.nlab_base_url + quote(title_en, safe=""),
+        "source_revision": page.get("source_revision") or "",
         "fetched_at": page.get("fetched_at") or "",
         "translated_at": page.get("translated_at") or iso_now(),
         "translator": {"model": settings.llm_model, "prompt_version": PROMPT_VERSION},
@@ -224,6 +225,7 @@ def run_translation(
             continue
         store.transition(page_id, "validated")
 
+        page["source_revision"] = store.get_meta("source_revision") or ""
         target_path = _output_path(page)
         target_path.parent.mkdir(parents=True, exist_ok=True)
         page_out = build_frontmatter(page) + "\n" + _bilingual_body(title, translated, fixed)
