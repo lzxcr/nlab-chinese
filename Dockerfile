@@ -18,7 +18,7 @@ ARG NLAB_REPOSITORY_URL=""
 RUN NLAB_SITE_URL="$NLAB_SITE_URL" NLAB_REPOSITORY_URL="$NLAB_REPOSITORY_URL" \
     NLAB_OG_IMAGES=0 pnpm quartz build
 
-FROM nginxinc/nginx-unprivileged:1.28-alpine AS runner
+FROM nginxinc/nginx-unprivileged:1.30-alpine AS runner
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /usr/src/app/public /usr/share/nginx/html
 
