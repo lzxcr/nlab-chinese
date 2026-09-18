@@ -4,7 +4,7 @@
 # Stage 1: build the site (pnpm + node 22)
 # Stage 2: serve public/ with a minimal non-root static server.
 
-FROM node:22-slim AS builder
+FROM node:25-slim AS builder
 WORKDIR /usr/src/app
 
 # pnpm via corepack (package.json pins the version).
